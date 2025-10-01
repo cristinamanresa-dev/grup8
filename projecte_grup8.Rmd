@@ -1,0 +1,95 @@
+---
+title: "Grup_8"
+date: "2025-10-01"
+output: html_document
+---
+
+```{r, warning=FALSE}
+#canviar directori on es tenen les dades
+#el nom de les dades és dades_train, vigilar al copiar codi que hi posa 'datos' (si voleu podem posar 'datos' igualment)
+library(readr)
+dades_train <- read_csv("train.csv", show_col_types = FALSE)
+head(dades_train)
+```
+
+#Descripció del problema
+
+*danceability*: mesura fins a quin punt la cançó és adequada per ballar.
+*energy*: intensitat i nivell d’activitat de la cançó.
+*acousticness*: grau en què la pista és acústica.
+*instrumentalness*: probabilitat que la cançó no contingui veus.
+*liveness*: probabilitat que la pista hagi estat gravada en directe.
+*audio_valence*: positivitat musical de la pista (feliç ↔ trist).
+*tempo*: velocitat de la cançó (BPM).
+*loudness*: volum mitjà en decibels.
+*speechiness*: presència de paraules parlades.
+*duration_ms*: durada total en mil·lisegons.
+*time_signature*: nombre de notes que conté cada compàs.
+*key*: tonalitat.
+*audio_mode*: mode musical.
+*song_popularity*: variable objectiu. Puntuació contínua que reflecteix fins a quin punt és popular la cançó.
+
+```{r, echo=FALSE}
+classes <- sapply(dades_train, class)
+varNum <- names(classes)[which(classes %in% c("numeric", "integer"))]
+```
+
+#Anàlisi exploratori univariant
+##Numèric
+###Descripció
+
+```{r}
+library(psych)
+psych::describe(dades_train[, varNum])
+```
+
+###Gràfics
+
+```{r}
+#NO FUNCIONA!!! PREGUNTAR QUE FER PQ NO SURT PQ HI HA NA'S
+par(mfrow = c(2, 4))  
+for (var in varNum) {
+  hist(dades_train[, var], main = paste0("Histograma variable ", var))
+  boxplot(dades_train[, var], main = paste0("Boxplot variable ", var))
+}
+```
+
+##Categòriques
+
+```{r}
+#transformem les variables *time_signature*, *key* i *audio_mode* a categòriques
+dades_train$time_signature <- as.factor(dades_train$time_signature)
+dades_train$key <- as.factor(dades_train$key)
+dades_train$audio_mode <- as.factor(dades_train$audio_mode)
+
+#fem la descripció per comprovar que surten com a variables categòriques
+classes <- sapply(dades_train, class)
+varCat <- names(classes)[which(classes %in% c("character", "factor"))]
+```
+```{r}
+for (var in varCat) {
+  tablaAbs <- data.frame(table(dades_train[, var]))
+  tablaFreq <- data.frame(table(dades_train[, var])/sum(table(dades_train[, var])))
+  m <- match(tablaAbs$Var1, tablaFreq$Var1)
+  tablaAbs[, "FreqRel"] <- tablaFreq[m, "Freq"]
+  colnames(tablaAbs) <- c("Categoria", "FreqAbs", "FreqRel")
+  
+  cat("===============", var, "===================================\n")
+  print(tablaAbs)
+  cat("==================================================\n")
+}
+```
+
+###Gràfics
+
+```{r}
+#falta posar títol a cada gràfic
+par(mfrow = c(2, 3))  
+for (var in varCat) {
+  barplot(table(dades_train[, var]))
+}
+par(mfrow = c(1, 1))  
+```
+
+#Anàlisi exploratori bivariant
+
