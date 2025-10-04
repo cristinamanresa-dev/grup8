@@ -1,0 +1,352 @@
+---
+title: "Preprocessing I"
+author: "Cristina Manresa Ponsa"
+date: "2025-10-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=F, warning=F, comment="")
+```
+
+# 1. Entrem les dades
+Tenim les dades sobre el tema de regressió de predicció de la populartitat de cançons.
+Lleguim les dades:
+```{r}
+sample <- read.csv("sample_submission.csv")
+
+train <- read.csv("train.csv", row.names=1)
+test <- read.csv("test.csv", row.names=1)
+```
+Entenc que les dades que hem de usar és les de tain, no entenc que és la bbdd de sample_submission.
+*Test i train no tenen les mateixes variables*
+
+# 2. Neteja de les dades
+Visualitzem les dades
+```{r}
+#install.packages("dlookr")
+library(dlookr)
+dlookr::diagnose(train)
+```
+S'observa que practicament totes les variables té 3956 missings.
+
+Eliminem les observacions duplicades o irrellevants,
+```{r}
+head(overview(train), n = 9)
+```
+Tenim 6 valors duplicats, per tant els eliminem?
+```{r}
+train <- train[!duplicated(train),]
+# comprovem que els hem eliminar
+head(overview(train), n = 9)
+```
+# 3. Outliers
+Primerament, anem a detectar els valors atípics, amb les següents funcions. Per una banda per les variables numèriques
+```{r}
+diagnose_numeric(train)
+```
+I per les variables categòriques
+```{r}
+diagnose_category(train)
+```
+## CAS UNIVARIANT
+Analitzem variable per variable.
+
+Mirem quines son les variables numèriques i quines la categoriques
+```{r}
+# Variables numèriques
+varNum <- names(train)[sapply(train, is.numeric)]
+
+# Variables categòriques (factors o caràcters)
+varCat <- names(train)[sapply(train, function(x) is.character(x) | is.factor(x))]
+
+```
+
+### PRIMERA OPCIÓ: MAX I MIN PER VAR NUM
+Primer busquem els màxims i mínims de cada variable numèrica:
+```{r}
+mapply(function(x, name) {
+  cat("var. ", name, ": \n\t min: ", min(x), "\n\t max: ", max(x), "\n")
+  invisible(NULL)  # Evita la salida de valores NULL
+}, train[, varNum], colnames(train[, varNum]))
+```
+
+### SEGONA OPCIÓ: CÀLCUL IQR (rang intercuartilico)
+```{r}
+library(EnvStats)
+
+IQROutlier <- function(variable, rmnas = TRUE) {
+  IQ <- iqr(variable, na.rm = rmnas)
+  intInf <- quantile(variable, probs = c(0.25, 0.75))[[1]] - 1.5*IQ
+  intSup <- quantile(variable, probs = c(0.25, 0.75))[[2]] + 1.5*IQ
+  posicions <- which(variable >= intSup | variable <= intInf)
+  if (length(posicions) > 0) {
+    cat("Existeixen outliers en les posicions:", paste0(posicions, collapse = ", "))
+  } else {
+    cat("No existeixen outliers")
+  }
+  return(posicions)
+}
+
+# ho aplico per totes les numèriques
+outliers_resultats <- lapply(varNum, function(v) {
+  cat("\nVariable:", v, "\n")
+  IQROutlier(train[[v]])
+})
+
+```
+
+*diria que l'error és perque les variables no haurien de ser numèriques*
+
+### TERCER OPCIÓ: FER UN BOXPLOT PER CADA VARIABLE
+Crec que és molt llarg, i s'hauria de fer per cada variable, ens ho podem estalviar crec.
+
+### QUARTA OPCIÓ: FER UN Z-Score PER CADA VARIABLE
+També és molt llarg
+
+### CINQUENA OPCIÓ: FER UN HAMPEL IDENTIFIER
+És calcular la mediana i la desviació absoluta mediana (MAD) en lloc de la mitjana, també seria per cada varibale, llarg
+
+### SISENA OPCIÓ: TEST ESTADÍSTICS
+Hi ha com tres opcions, tot basats en la normal.
+
+## CAS MULTIVAIRANT
+Ara mirem si els outliers és degut a la combinació de les variables.
+
+Podem usar metodes com la distància de Mahalanobis o algoritmes mes avançats per detectar anomalies.
+
+Fem un scatterplot i altres gràfics en cas concrets de variables que vulguem
+```{r}
+library(scatterplot3d)
+library(readr)
+# Hauriem de canviar les variables per les que vulguem
+scatterplot3d(train[,""], train[, ""],train[, ""])
+
+library(rgl)
+
+# Plot
+rgl::plot3d(x = train[, ""], y = train[, ""], z = train[, ""], 
+col = "black", type = 'p', radius = .1)
+
+library(plotly)
+
+(fig <- plotly::plot_ly(train, x = ~, y = ~, z = ~, size = 1) %>% 
+       add_markers())
+```
+
+Si ho volem fer de manera més general
+```{r}
+library(mvoutlier)
+dades2 <- train; Y <- as.matrix(dades2)
+distances <- dd.plot(Y,quan=1/2, alpha=0.025)
+```
+
+A partir, del head(distances$variable), podem mirar 6 observacions de aquella varibale per veure com està comportant-se.
+
+```{r}
+res <- aq.plot(Y,delta=qchisq(0.975,df=ncol(Y)),quan=1/2,alpha=0.05)
+str(res)
+head(res$outliers)
+table(res$outliers)
+```
+
+A més podem visualitzar tots els outliers detecatts com a TRUE
+```{r}
+#windows()
+par(mfrow=c(1, 1))
+library(MVN)
+# mvnoutliers <- mvn(train, multivariateOutlierMethod = "adj", showOutliers = TRUE, 
+#                   showNewData = TRUE)
+mvnoutliers <- mvn(data = train, mvn_test = "royston", 
+                   univariate_test = "AD", 
+              multivariate_outlier_method = "adj",
+              show_new_data = TRUE)
+```
+
+I observem la distancia de Mahalanobis
+```{r}
+head(summary(mvnoutliers, select = "outliers"))
+```
+
+### distància de mahalanobis
+```{r}
+distancia_mahalanobis <- mahalanobis(train, colMeans(train), cov(train))
+plot(density(distancia_mahalanobis))
+```
+Es mostren els valors de la bbdd que euden per sobre del 99% de la distribució chi-qaudrat
+```{r}
+cutoff <- qchisq(p = 0.99, df = ncol(train))
+train[distancia_mahalanobis>cutoff, ]
+```
+Ordenem de forma decreixent, segons el score de Mahalanobis.
+```{r}
+train <- train[order(distancia_mahalanobis, decreasing = TRUE),]
+```
+Visualitzem l'histograme de les distàncies per veure on tallem els outliers
+```{r}
+par(mfrow=c(1,1))
+hist(distancia_mahalanobis)
+```
+
+Anem a descartar els outlier segons el umbral
+```{r}
+umbral <- 8 # canvia respecte les nostres dades
+train[, "outlier"] <- (distancia_mahalanobis > umbral)
+
+train[, "color"] <- ifelse(train[, "outlier"], "red", "black")
+scatterplot3d(train[, "DC"], train[, "temp"], train[, "RH"], 
+              color = train[, "color"])
+
+(fig <- plotly::plot_ly(trian, x = ~DC, y = ~temp, z = ~RH, 
+                       color = ~color, colors = c('#0C4B8E', '#BF382A')) %>% 
+                        add_markers())
+
+(quienes <- which(train[, "outlier"] == TRUE))
+```
+
+### Mahalanobis Robusto
+```{r}
+library(chemometrics)
+
+dis <- chemometrics::Moutlier(train[, c("DC", "temp", "RH")], quantile = 0.99, plot = TRUE)
+
+par(mfrow = c(1, 1))
+plot(dis$md, dis$rd, type = "n")
+text(dis$md, dis$rd, labels = rownames(train))
+
+a <- which(dis$rd > 7)
+print(a)
+```
+
+### Regresió lineal i residus (No codi)
+Un punt amb un residu gran pot considerar-se un outlier
+
+### Distància de Cook (No codi)
+Identifica punts amb gran influència en la regresió. Un valor de Cook D_i > 1 és un outliers.
+
+### K-Nearest Neighbors (KNN) Outlier Score
+```{r}
+library(adamethods)
+
+do_knno(train[, c("DC", "temp", "RH")], k=1, top_n = 30)
+```
+
+### Local Outlier Factor (LOF)
+Compara la densitat d'un punt amb la densitat dels seus veïns. Un valor LOF alt
+```{r}
+library(DMwR2)
+library(dplyr)
+
+outlier.scores <- lofactor(train[, c("DC", "temp", "RH")], k = 5)
+par(mfrow=c(1,1))
+plot(density(outlier.scores))
+outlier.scores
+outliers <- order(outlier.scores, decreasing=T)
+outliers <- order(outlier.scores, decreasing=T)[1:5]
+```
+
+Aprofitem el ACP per poder visualitzar els outliers
+```{r}
+n <- nrow(train[, c("DC", "temp", "RH")]); labels <- 1:n; labels[-outliers] <- "."
+biplot(prcomp(train[, c("DC", "temp", "RH")]), cex = .8, xlabs = labels)
+```
+
+Grafiquem les correlacions per veure els gràfics
+```{r}
+pch <- rep(".", n)
+pch[outliers] <- "+"
+col <- rep("black", n)
+col[outliers] <- "red"
+pairs(train[, c("DC", "temp", "RH")], pch = pch, col = col)
+
+# en 3D
+plot3d(train[, "DC"], train[, "temp"], train[, "RH"], type = "s", col = col, size = 1)
+```
+
+#### Nova versió de LOF
+```{r}
+library(Rlof)
+outliers.scores <- Rlof::lof(train[, c("DC", "temp", "RH")], k = 5)
+plot(density(outliers.scores))
+
+#outlier.scores <- lof(dades[, c("DC", "temp", "RH")], k=c(5:10))
+```
+
+### Isolation Forest
+```{r}
+### Cargamos las librerias necesarias
+library(R.matlab)   # Lectura de archivos .mat
+library(solitude)   # Modelo isolation forest
+library(tidyverse)  # Preparación de dades y gráficos
+library(MLmetrics)
+
+isoforest <- isolationForest$new(
+  sample_size = as.integer(nrow(train)/2),
+  num_trees   = 500, 
+  replace     = TRUE,
+  seed        = 123
+)
+isoforest$fit(dataset = train %>% select(-y))
+```
+
+Ara fem les prediccions
+```{r}
+predicciones <- isoforest$predict(
+  data = train %>% select(-y)
+)
+head(predicciones)
+
+# grafiquem
+ggplot(data = predicciones, aes(x = average_depth)) +
+  geom_histogram(color = "gray40") +
+  geom_vline(
+    xintercept = quantile(predicciones$average_depth, seq(0, 1, 0.1)),
+    color      = "red",
+    linetype   = "dashed") +
+  labs(
+    title = "Distribución de las distancias medias del Isolation Forest",
+    subtitle = "Cuantiles marcados en rojo"  ) +
+  theme_bw() +
+  theme(plot.title = element_text(size = 11))
+```
+
+```{r}
+cuantiles <- quantile(x = predicciones$average_depth, probs = seq(0, 1, 0.05))
+cuantiles
+```
+
+### TIPS DE DETECCION DE ANOMALIES
+Hi ha molt de text llegit quan ho puguem fer amb les nostres dades bé
+```{r}
+train <- train %>%
+  bind_cols(predicciones)
+
+ggplot(data = train,
+       aes(x = y, y = average_depth)) +
+  geom_jitter(aes(color = y), width = 0.03, alpha = 0.3) + 
+  geom_violin(alpha = 0) +
+  geom_boxplot(width = 0.2, outlier.shape = NA, alpha = 0) +
+  stat_summary(fun = "mean", colour = "orangered2", size = 3, geom = "point") +
+  labs(title = "Distancia promedio en el modelo Isolation Forest",
+       x = "clasificación (0 = normal, 1 = anomalía)",
+       y = "Distancia promedio") +
+  theme_bw() + 
+  theme(legend.position = "none",
+        plot.title = element_text(size = 11)
+  )
+```
+
+```{r}
+resultados <- train %>%
+  select(y, average_depth) %>%
+  arrange(average_depth) %>%
+  mutate(clasificacion = if_else(average_depth <= 8.5, "1", "0"))
+
+mat_confusion <- MLmetrics::ConfusionMatrix(
+  y_pred = resultados$clasificacion,
+  y_true = resultados$y)
+
+mat_confusion
+```
+
+# 4. Missings
