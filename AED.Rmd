@@ -1,0 +1,154 @@
+---
+title: "AED"
+date: "2025-10-07"
+output: html_document
+---
+
+```{r, warning=FALSE}
+#canviar directori on es tenen les dades
+library(readr)
+train <- read.csv("train.csv", row.names=1)
+test <- read.csv("test.csv", row.names=1)
+```
+
+#Descripció del problema
+
+*danceability*: mesura fins a quin punt la cançó és adequada per ballar.
+*energy*: intensitat i nivell d’activitat de la cançó.
+*acousticness*: grau en què la pista és acústica.
+*instrumentalness*: probabilitat que la cançó no contingui veus.
+*liveness*: probabilitat que la pista hagi estat gravada en directe.
+*audio_valence*: positivitat musical de la pista (feliç ↔ trist).
+*tempo*: velocitat de la cançó (BPM).
+*loudness*: volum mitjà en decibels.
+*speechiness*: presència de paraules parlades.
+*duration_ms*: durada total en mil·lisegons.
+*time_signature*: nombre de notes que conté cada compàs.
+*key*: tonalitat.
+*audio_mode*: mode musical.
+*song_popularity*: variable objectiu. Puntuació contínua que reflecteix fins a quin punt és popular la cançó.
+
+```{r, echo=FALSE}
+classes <- sapply(train, class)
+varNum <- names(classes)[which(classes %in% c("numeric", "integer"))]
+```
+
+#Anàlisi exploratori univariant
+##Numèric
+###Descripció
+
+```{r, echo=FALSE}
+library(psych)
+psych::describe(train[, varNum])
+```
+
+###Gràfics
+
+```{r, echo=FALSE}
+par(mfrow = c(2, 4))  
+for (var in varNum) {
+  hist(train[, var], main = paste0("Histograma variable ", var))
+  boxplot(train[, var], main = paste0("Boxplot variable ", var))
+}
+```
+
+##Categòriques
+
+```{r}
+#transformem les variables *key*, *audio_mode*, *tempo*, *instrumentalness*, *liveness* i *acousticness* a categòriques
+#es transformen a train i a test
+#creem una nova variable *time_signature_cat* que serà categòrica
+
+train$key <- as.factor(train$key)
+train$audio_mode <- as.factor(train$audio_mode)
+test$key <- as.factor(test$key)
+test$audio_mode <- as.factor(test$audio_mode)
+
+#he fet aixi amb probabilitats però potser hauríem de posar arbitràriament els límits de les categories
+
+train$tempo <- cut(train$tempo,
+                    breaks = quantile(train$tempo, probs = c(0, 1/3, 2/3, 1), na.rm = TRUE),
+                    include.lowest = TRUE,
+                    labels = c("lent", "mitjà", "ràpid"))
+
+test$tempo <- cut(test$tempo,
+                    breaks = quantile(test$tempo, probs = c(0, 1/3, 2/3, 1), na.rm = TRUE),
+                    include.lowest = TRUE,
+                    labels = c("lent", "mitjà", "ràpid"))
+
+
+
+train$instrumentalness <- cut(
+  train$instrumentalness,
+  breaks = c(0, 0.33, 0.66, 1),
+  labels = c("sense_veu", "poca_veu", "molta_veu"),
+  include.lowest = TRUE
+)
+
+test$instrumentalness <- cut(
+  test$instrumentalness,
+  breaks = c(0, 0.33, 0.66, 1),
+  labels = c("sense_veu", "poca_veu", "molta_veu"),
+  include.lowest = TRUE
+)
+
+
+
+train$liveness <- cut(train$liveness,
+                    breaks = quantile(train$liveness, probs = c(0, 1/3, 2/3, 1), na.rm = TRUE),
+                    include.lowest = TRUE,
+                    labels = c("gravada", "mig", "en_viu"))
+
+test$liveness <- cut(test$liveness,
+                    breaks = quantile(test$liveness, probs = c(0, 1/3, 2/3, 1), na.rm = TRUE),
+                    include.lowest = TRUE,
+                    labels = c("gravada", "mig_en_viu", "en_viu"))
+
+
+
+train$acousticness <- cut(train$acousticness,
+                    breaks = quantile(train$acousticness, probs = c(0, 1/3, 2/3, 1), na.rm = TRUE),
+                    include.lowest = TRUE,
+                    labels = c("no_acustic", "mig_acustic", "acustic"))
+
+test$acousticness <- cut(test$acousticness,
+                    breaks = quantile(test$acousticness, probs = c(0, 1/3, 2/3, 1), na.rm = TRUE),
+                    include.lowest = TRUE,
+                    labels = c("no_acustic", "mig_acustic", "acustic"))
+
+
+
+train$time_signature_cat <- as.factor(train$time_signature)
+test$time_signature_cat <- as.factor(test$time_signature)
+
+#fem la descripció per comprovar que surten com a variables categòriques
+classes <- sapply(train, class)
+varCat <- names(classes)[which(classes %in% c("character", "factor"))]
+```
+```{r}
+for (var in varCat) {
+  tablaAbs <- data.frame(table(train[, var]))
+  tablaFreq <- data.frame(table(train[, var])/sum(table(train[, var])))
+  m <- match(tablaAbs$Var1, tablaFreq$Var1)
+  tablaAbs[, "FreqRel"] <- tablaFreq[m, "Freq"]
+  colnames(tablaAbs) <- c("Categoria", "FreqAbs", "FreqRel")
+  
+  cat("===============", var, "===================================\n")
+  print(tablaAbs)
+  cat("==================================================\n")
+}
+```
+
+###Gràfics
+
+```{r}
+#falta posar títol a cada gràfic
+par(mfrow = c(2, 3))  
+for (var in varCat) {
+  barplot(table(train[, var]))
+}
+par(mfrow = c(1, 1))  
+```
+
+#Anàlisi exploratori bivariant
+
