@@ -125,6 +125,7 @@ test$time_signature_cat <- as.factor(test$time_signature)
 classes <- sapply(train, class)
 varCat <- names(classes)[which(classes %in% c("character", "factor"))]
 ```
+
 ```{r}
 for (var in varCat) {
   tablaAbs <- data.frame(table(train[, var]))
@@ -138,6 +139,16 @@ for (var in varCat) {
   cat("==================================================\n")
 }
 ```
+
+Fem un export desprès del AED.
+```{r}
+train_AED <- train
+test_AED <- test
+
+write_csv(train_AED, "train_AED.csv")
+write_csv(test_AED, "test_AED.csv")
+```
+
 
 ###Gràfics
 
