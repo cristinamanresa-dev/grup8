@@ -11,15 +11,11 @@ knitr::opts_chunk$set(echo = TRUE, message=F, warning=F, comment="")
 
 # 1. Entrem les dades
 Tenim les dades sobre el tema de regressió de predicció de la populartitat de cançons.
-Lleguim les dades:
+Lleguim les dades que han passat ja pel AED:
 ```{r}
-sample <- read.csv("sample_submission.csv")
-
-train <- read.csv("train.csv", row.names=1)
-test <- read.csv("test.csv", row.names=1)
+train <- read.csv("train_AED.csv")
+test <- read.csv("test_AED.csv")
 ```
-Entenc que les dades que hem de usar és les de tain, no entenc que és la bbdd de sample_submission.
-*Test i train no tenen les mateixes variables*
 
 # 2. Neteja de les dades
 Visualitzem les dades
@@ -28,28 +24,28 @@ Visualitzem les dades
 library(dlookr)
 dlookr::diagnose(train)
 ```
-S'observa que practicament totes les variables té 3956 missings.
+S'observa que practicament totes les variables tenen 3956 missings.
 
 Eliminem les observacions duplicades o irrellevants,
 ```{r}
 head(overview(train), n = 9)
 ```
-Tenim 6 valors duplicats, per tant els eliminem?
+Tenim 6 valors duplicats, per tant els eliminarem, ja que tindirem informació duplicada. Fem la comprovació.
 ```{r}
 train <- train[!duplicated(train),]
 # comprovem que els hem eliminar
 head(overview(train), n = 9)
 ```
 # 3. Outliers
-Primerament, anem a detectar els valors atípics, amb les següents funcions. Per una banda per les variables numèriques
+Primerament, anem a detectar els valors atípics, amb les següents funcions. Per una banda per les variables numèriques i categòriques
 ```{r}
-diagnose_numeric(train)
+library(dplyr)
+(num <- diagnose_numeric(train) %>% select(variables, outlier))
+(cat <- diagnose_category(train))
 ```
-I per les variables categòriques
-```{r}
-diagnose_category(train)
-```
-## CAS UNIVARIANT
+S'observa que per les variables númeriques tenim un nombre molt elevat d'outliers en la variable speechiness, que fa referència a la presència de paraules parlades. També veiem la de song_duration_ms i la de time_signature, on es fa referència al temps de la canço i el nombre de notes de cada compas. Tabé la loudness que és els valors de decibels de cada canço.
+
+## CAS UNIVARIANT (No fem res???)
 Analitzem variable per variable.
 
 Mirem quines son les variables numèriques i quines la categoriques
@@ -62,54 +58,6 @@ varCat <- names(train)[sapply(train, function(x) is.character(x) | is.factor(x))
 
 ```
 
-### PRIMERA OPCIÓ: MAX I MIN PER VAR NUM
-Primer busquem els màxims i mínims de cada variable numèrica:
-```{r}
-mapply(function(x, name) {
-  cat("var. ", name, ": \n\t min: ", min(x), "\n\t max: ", max(x), "\n")
-  invisible(NULL)  # Evita la salida de valores NULL
-}, train[, varNum], colnames(train[, varNum]))
-```
-
-### SEGONA OPCIÓ: CÀLCUL IQR (rang intercuartilico)
-```{r}
-library(EnvStats)
-
-IQROutlier <- function(variable, rmnas = TRUE) {
-  IQ <- iqr(variable, na.rm = rmnas)
-  intInf <- quantile(variable, probs = c(0.25, 0.75))[[1]] - 1.5*IQ
-  intSup <- quantile(variable, probs = c(0.25, 0.75))[[2]] + 1.5*IQ
-  posicions <- which(variable >= intSup | variable <= intInf)
-  if (length(posicions) > 0) {
-    cat("Existeixen outliers en les posicions:", paste0(posicions, collapse = ", "))
-  } else {
-    cat("No existeixen outliers")
-  }
-  return(posicions)
-}
-
-# ho aplico per totes les numèriques
-outliers_resultats <- lapply(varNum, function(v) {
-  cat("\nVariable:", v, "\n")
-  IQROutlier(train[[v]])
-})
-
-```
-
-*diria que l'error és perque les variables no haurien de ser numèriques*
-
-### TERCER OPCIÓ: FER UN BOXPLOT PER CADA VARIABLE
-Crec que és molt llarg, i s'hauria de fer per cada variable, ens ho podem estalviar crec.
-
-### QUARTA OPCIÓ: FER UN Z-Score PER CADA VARIABLE
-També és molt llarg
-
-### CINQUENA OPCIÓ: FER UN HAMPEL IDENTIFIER
-És calcular la mediana i la desviació absoluta mediana (MAD) en lloc de la mitjana, també seria per cada varibale, llarg
-
-### SISENA OPCIÓ: TEST ESTADÍSTICS
-Hi ha com tres opcions, tot basats en la normal.
-
 ## CAS MULTIVAIRANT
 Ara mirem si els outliers és degut a la combinació de les variables.
 
@@ -120,17 +68,17 @@ Fem un scatterplot i altres gràfics en cas concrets de variables que vulguem
 library(scatterplot3d)
 library(readr)
 # Hauriem de canviar les variables per les que vulguem
-scatterplot3d(train[,""], train[, ""],train[, ""])
+scatterplot3d(train[,"speechiness"], train[, "song_duration_ms"],train[, "loudness"])
 
 library(rgl)
 
 # Plot
-rgl::plot3d(x = train[, ""], y = train[, ""], z = train[, ""], 
+rgl::plot3d(x = train[, "speechiness"], y = train[, "song_duration_ms"], z = train[, "loudness"], 
 col = "black", type = 'p', radius = .1)
 
 library(plotly)
 
-(fig <- plotly::plot_ly(train, x = ~, y = ~, z = ~, size = 1) %>% 
+(fig <- plotly::plot_ly(train, x = ~"speechiness", y = ~"song_duration_ms", z = ~"loudness", size = 1) %>%
        add_markers())
 ```
 
@@ -168,9 +116,12 @@ I observem la distancia de Mahalanobis
 head(summary(mvnoutliers, select = "outliers"))
 ```
 
-### distància de mahalanobis
+### distància de mahalanobis (No em dona correctament)
 ```{r}
-distancia_mahalanobis <- mahalanobis(train, colMeans(train), cov(train))
+train_num <- dplyr::select_if(train, is.numeric)
+train_num <- na.omit(train_num)
+
+distancia_mahalanobis <- mahalanobis(train_num, colMeans(train_num), cov(train_num))
 plot(density(distancia_mahalanobis))
 ```
 Es mostren els valors de la bbdd que euden per sobre del 99% de la distribució chi-qaudrat
@@ -347,492 +298,5 @@ mat_confusion <- MLmetrics::ConfusionMatrix(
   y_true = resultados$y)
 
 mat_confusion
-```
-
-# 4. Missings
-*Manejar correctamente los NA es esencial: eliminarlos puede reducir mucho el dataset, mientras que imputarlos incorrectamente puede introducir sesgos.*
-
-### 4.1 Generar Data amb NA's, nosaltres ja els tenim
-```{r}
-colSums(is.na(train))
-```
-Nosaltres ja tenim missings com hem vist abans.
-
-### 4.2 Little test
-Ens permet detectar amb quin tipus de NA's ens trobem
-```{r}
-naniar::mcar_test(train)
-```
-Si el valor p de la prova és inferior a 0 això vol dir que les dades amb NAs s’han generat aleatòriament. Les nostres son aleatories perque es 0.18.
-
-### 4.3 Patrons descriptius de NA en una bbdd
-#### Explorar les relacions de NA's
-```{r}
-library(visdat)
-library(ggplot2)
-library(naniar)
-
-vis_dat(train)
-vis_miss(train)
-
-ggplot(train, aes(x = ,y = )) + 
-  geom_miss_point() +
-  face_wrap()
-```
-
-#### Visualitzacio dels NA's per variables
-```{r}
-gg_miss_var(train) + labs(y = "Look at all the missing ones")
-```
-
-#### Detecció de NA's en la bbdd
-```{r}
-aq_shadow <- bind_shadow(train)
-
-train %>%
-  bind_shadow() %>%
-  group_by(Ozone_NA) %>%
-  summarise_at(.vars = "Solar.R",
-               .funs = c("mean", "sd", "var", "min", "max"),
-               na.rm = TRUE)
-
-ggplot(train,
-       aes(x = ,
-           colour = Ozone_NA)) + 
-  geom_density()
-```
-
-#### Extraiem les estadístiques amb NA's de la bbdd
-```{r}
-prop_miss_case(train)
-pct_miss_case(train)
-miss_case_summary(train)
-miss_case_table(train)
-prop_miss_var(train)
-pct_miss_var(train)
-miss_var_summary(train)
-miss_var_table(train)
-```
-
-#### Imputació bàsica
-```{r}
-#media
-train[, "imputed_Sepal.Length"] <- with(train, Hmisc::impute(Sepal.Length, mean))
-#mediana
-pre_median <- preProcess(train, method = "medianImpute")
-imputed_median <- predict(pre_median, train)
-diagnose(imputed_median)
-#valor aleatori
-train[, "imputed_Sepal.Length2"] <- with(train, Hmisc::impute(Sepal.Length, 'random'))
-```
-De manera similar podeu utilitzar la mediana min, max, per imputar el valor que manca.
-
-REpresenta la distribucuió a variables reals i d'imputacio a traves del grafics de densitat amb ggplot2
-```{r}
-df_long <- train %>%
-  select(Sepal.Length, imputed_Sepal.Length, imputed_Sepal.Length2) %>%
-  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Valor")
-
-ggplot(df_long, aes(x = Valor, fill = Variable)) +
-  geom_density(alpha = 0.3) +  # Transparencia para mejor visualización
-  labs(title = "Densidad de las tres variables",
-       x = "Valor",
-       y = "Densidad") +
-  theme_minimal() +
-  scale_fill_manual(values = c("blue", "red", "green"))
-
-train[, c("imputed_Sepal.Length", "imputed_Sepal.Length2")] <- NULL
-```
-
-Una altra opció és usant el paquet argImpute
-```{r}
-(impute_arg <- Hmisc::aregImpute(~ Sepal.Length + Sepal.Width + Petal.Length + Petal.Width +
-                           Species, data = train, n.impute = 5))
-
-# la resta de codi es revisnat una variable en concret de la bbdd, per mirar el comortament suposu.
-```
-
-### Multiple Iterative Regresson Imputation (MI method)
-Imputem els valors NA's segons aquest metode
-```{r}
-mi_data <- mi::mi(train, seed = 335)
-
-# revisem la informacio
-summary(mi_data)
-plot(mi_data)
-par(ask = FALSE)
-
-# i les intereccions
-mi_data@data
-```
-
-### Media con una variable target
-*mirar quina variable agafem i llavors fer el codi*
-
-### MICE
-Eliminem les variables categoriques
-```{r}
-quiCat <- which(lapply(train, class) %in% c("character", "factor"))
-categories <- names(train)[quiCat]
-train2 <- subset(train, select = -c(get(categories)))
-summary(train2)
-```
-Visualitem els patrons de NA?s de la bbdd
-```{r}
-par(mfrow = c(1, 1))
-mice::md.pattern(train2, rotate.names = TRUE)
-
-# tambe ho podem fer amb
-mice_plot <- VIM::aggr(train2, col=c('navyblue','yellow'),
-                  numbers=TRUE, sortVars=TRUE,
-                  labels=names(train), cex.axis=.7,
-                  gap=3, ylab=c("Missing data","Pattern"))
-```
-
-A continuació realitzem la imputacio de valors faltants de manera multivariada
-```{r}
-imputed_Data <- mice::mice(train2, m=5, maxit = 50, method = 'pmm', seed = 500)
-```
-
-```{r}
-summary(imputed_Data)
-```
-Inspeccionem la calitat de les imputacions
-```{r}
-mice::stripplot(imputed_Data, Sepal.Width, pch = 19, xlab = "Imputation number")
-```
-Al final seleccionamos una de las iteracciones y la dejamos como imputación de los valores faltantes.
-```{r}
-completeData <- mice::complete(imputed_Data, action = "long")
-```
-
-### KNN
-```{r}
-tipos <- sapply(train, class)
-varNum <- names(tipos)[which(tipos %in% c("numeric", "integer"))]
-data_knn_imputation <- multiUS::KNNimp(train[, varNum], k = 1)
-summary(data_knn_imputation)
-```
-
-Visualitzem la diferència entre les dos imputacions
-```{r}
-newBD <- data.frame(real = train[, "Sepal.Length"], imputed = data_knn_imputation[, "Sepal.Length"])
-df_long <- newBD %>%
-  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Valor")
-
-ggplot(df_long, aes(x = Valor, fill = Variable)) +
-  geom_density(alpha = 0.3) +  # Transparencia para mejor visualización
-  labs(title = "Densidad de las tres variables",
-       x = "Valor",
-       y = "Densidad") +
-  theme_minimal() +
-  scale_fill_manual(values = c("blue", "red"))
-```
-Una altra manera seria
-```{r}
-#| label: graficamos_mi_iteration
-#| echo: true
-#| eval: false
-#| warning: false
-#| message: false
-#| error: false
-
-library("caret")
-pre_knn <- preProcess(dades, method = "knnImpute", k = 2)
-imputed_knn <- predict(pre_knn, dades)
-diagnose(imputed_knn)
-```
-
-### missForest
-
-```{r}
-library(missForest)
-train.imp <- missForest(train, variablewise = T, verbose = T) 
-```
-
-Visualitzem els valors imputats
-```{r}
-train.imp$ximp
-```
-
-Ara el error comes en les imputacions
-```{r}
-train.imp$OOBerror
-```
-
-Comparem el accuracy actual
-```{r}
-(train.err <- mixError(train.imp$ximp, train, train))
-```
-
-Mirem la diferència entre els imputats
-```{r}
-newBD <- data.frame(real = train[, ""], imputed =  train.imp$ximp[, ""])
-df_long <- newBD %>%
-  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Valor")
-
-ggplot(df_long, aes(x = Valor, fill = Variable)) +
-  geom_density(alpha = 0.3) +  # Transparencia para mejor visualización
-  labs(title = "Densidad de las tres variables",
-       x = "Valor",
-       y = "Densidad") +
-  theme_minimal() +
-  scale_fill_manual(values = c("blue", "red"))
-```
-
-## MIMMI (es un script a part)
-```{r}
-# This code has been created by Karina Gibert, from Universitat Politècnica de Catalunya (Barcelona, Spain)
-# Please, in all uses of this code, refer to her and the paper https://doi.org/10.1080/00207160.2013.783209
-# Complete reference:
-#  Gibert, K. (2014). Mixed intelligent-multivariate missing imputation. International Journal of Computer Mathematics, 91(1), 85-96
-#Barcelona May 2019
-# Some updates were performed by Dante Conti & Sergi Ramirez
-
-install.packages("StatMatch")
-library(cluster)
-require(StatMatch)
-
-#assume missings represented with NA
-uncompleteVar<-function(vector){any(is.na(vector))}
-
-Mode <- function(x) 
-{
-  x<-as.factor(x)
-  maxV<-which.max(table(x))
-  return(levels(x)[maxV])
-}
-
-
-
-MiMMi <- function(data, priork=-1)
-{
-  #Identify columns without missings
-  colsMiss<-which(sapply(data, uncompleteVar))
-  if(length(colsMiss)==0){
-    print("Non missing values found")
-    out<-dd
-    }else{
-    K<-dim(data)[2]
-    colsNoMiss<-setdiff(c(1:K),as.vector(colsMiss))
-  
-    #cluster with complete data
-    dissimMatrix <- daisy(data[,colsNoMiss], metric = "gower", stand=TRUE)
-    distMatrix<-dissimMatrix^2
-  
-    hcdata<-hclust(distMatrix, method = "ward.D2")
-    plot(hcdata)
-    nk<-2
-    if(priork==-1){
-      print("WARNING: See the dendrogramm and ZOOM if required")
-      print("and enter a high number of clusters")
-      nk<-readline("(must be a positive integer). k: ")
-      nk<-as.integer(nk)
-    }else{nk<-priork}
-  
-    partition<-cutree(hcdata, nk)
-
-    CompleteData<-data
-    #nomes cal per tenir tra?a de com s'ha fet la substituci?
-    newCol<-K+1
-    CompleteData[,newCol]<-partition
-    names(CompleteData)[newCol]<-"ClassAux"
-  
-    setOfClasses<-as.numeric(levels(as.factor(partition)))
-    imputationTable<-data.frame(row.names=setOfClasses)
-    p<-1
-  
-    for(k in colsMiss)
-    {
-       #Files amb valors utils
-       rowsWithFullValues<-!is.na(CompleteData[,k])
-    
-       #calcular valors d'imputacio
-       if(is.numeric(CompleteData[,k]))
-       {
-          imputingValues<-aggregate(CompleteData[rowsWithFullValues,k], by=list(partition[rowsWithFullValues]), FUN=mean)
-       }else{
-          imputingValues<-aggregate(CompleteData[rowsWithFullValues,k], by=list(partition[rowsWithFullValues]), FUN=Mode)
-       }
-    
-       #Impute
-    
-       for(c in setOfClasses)
-       {
-          CompleteData[is.na(CompleteData[,k]) & partition==c,k]<-imputingValues[c,2]
-       }
-    
-       #Imputation Table
-       imputationTable[,p]<-imputingValues[,2]
-       names(imputationTable)[p]<-names(data)[k]
-       p<-p+1
-    }
-    
-    rownames(imputationTable)<-paste0("c", 1:nk)
-    out<-new.env()
-    out$imputedData<-CompleteData
-    out$imputation<-imputationTable
-  }
-  return(out)
-}
-
-
-
-### Checking
-
-dd<-iris
-#Artificially create missings in the matrix to test the function
-dd[sample(150, 20),2]<-NA
-dd[sample(150, 20), 5]<-NA
-#Now dd has missing values and MIMMI can help
-
-
-#run MIMMI
-dimpute<-MiMMi(dd)
-
-#table of imputation values used
-dimpute$imputation
-
-#imputed dataset
-dimpute$imputedData
-
-plot(density(na.omit(dd[,2])))
-lines(density(dimpute$imputedData[,2]),col=2)
-prop.table(table(iris[,5]))
-prop.table(table(dimpute$imputedData[,5]))
-
-```
-
-# Features Selection (tot es teoria, per si volem per estudiar)
-
-## Preselecció de variables
-
-### Variancia nul·la
-*Uno de los aspectos fundamentales en la selección de variables es comprobar si su varianza es cero o cercana a cero porque, si es así, sus valores son iguales o similares, respectivamente, y, por tanto, esas variables estarán perfectamente o cuasiperfectamente correlacionadas con el término independiente del modelo, con lo cual, en el mejor de los casos, solo añadirán ruido al modelo. Este tipo de efecto acaba afectando en la división de los conjuntos de entrenamiento y validación de los datos.*
-```{r}
-library(caret)
-library(idealista18)
-library(tidyverse)
-
-Madrid_Sale <- as.data.frame(Madrid_Sale)
-numeric_cols <- sapply(Madrid_Sale, is.numeric)
-Madrid_Sale_num <- Madrid_Sale[, numeric_cols]
-
-varianza <- nearZeroVar(Madrid_Sale_num, saveMetrics = T)
-head(varianza, 2)
-```
-
-### Correlacion entre variables
-*puede afectar a la fiabilidad de las predicciones al tener variables muy correlacionadas. En el caso extreno el modelo tendrá problemas de colinealidad o multicolinealidad. Para detectar las variables con muy elevada correlación entre ellas, se le pasa la función findCorrelation() de caret, con valor 0,9, a la matriz de correlaciones lineales entre las variables susceptibles de ser seleccionadas.*
-```{r}
-madrid_cor <- cor(Madrid_Sale_num[, 1:20])
-(alta_corr <- findCorrelation(madrid_cor, cutoff = .9))
-
-# visualitzem
-library("corrplot")
-
-matriz_corr <- cor(Madrid_Sale_num[, 1:8])
-corrplot(matriz_corr, method = "circle")
-```
-
-### Combinacions lineals
-```{r}
-Madrid_Sale_num_na <- tidyr::drop_na(Madrid_Sale_num) # Es necesario eliminar los NA.
-(combos <- findLinearCombos(Madrid_Sale_num_na))
-```
-
-## Mètodos de seleccion de variables
-### Filters
-```{r}
-library("rsample")
-
-# Se toma una muestra con el paquete rsample
-set.seed(7)
-Madrid_Sale_num_sample <- sample(1:nrow(Madrid_Sale_num), size = 5000, replace = FALSE)
-Madrid_Sale_num_sample <- Madrid_Sale_num[Madrid_Sale_num_sample, ]
-# Se realiza binning con cuatro bins
-Madrid_Sale_num_sample_bin <- Madrid_Sale_num_sample |>
-  mutate(price_bin = cut(PRICE, breaks = c(0, 250000, 500000, 750000, 10000000), labels = c("primerQ", "segundoQ", "tercerQ", "c"), include.lowest = TRUE)) |>
-  select(price_bin, CONSTRUCTEDAREA, ROOMNUMBER, BATHNUMBER, HASTERRACE, HASLIFT)
-# Se eliminan los registros con valores missing
-Madrid_Sale_sample_na <- drop_na(Madrid_Sale_num_sample_bin)
-
-library("FSinR")
-
-# Método tipo filtro MDLC (Minimum-Description_Length-Criterion)
-evaluador <- filterEvaluator("MDLC")
-
-# Se genera el algoritmo de búsqueda
-buscador <- searchAlgorithm("sequentialForwardSelection")
-
-# Se implementa el proceso, pasando a la función los dos parámetros anteriores
-resultados <- featureSelection(Madrid_Sale_sample_na, "price_bin", buscador, evaluador)
-
-# Se muestran los resultados
-resultados$bestFeatures
-resultados$bestValue
-```
-
-### Wrappers
-```{r}
-# Se fijan los parámetros
-evaluador <- wrapperEvaluator("rpart1SE")
-buscador <- searchAlgorithm("sequentialForwardSelection")
-# Se evalúan sobre Madrid_Sale_sample_na
-results <- featureSelection(Madrid_Sale_sample_na, "price_bin", buscador, evaluador)
-resultados$bestFeatures
-resultados$bestValue
-```
-
-## Embeddings
-```{r}
-library("randomForest")
-
-# Usar random forest para la selección de variables
-rf_modelo <- randomForest(price_bin ~ ., data = Madrid_Sale_num_sample_bin)
-
-# Listar las variables más importantes
-varImp(rf_modelo)
-```
-
-# Features Enginieering
-```{r}
-dummies <- dummyVars("  ~ .", data = Madrid_Sale_num_sample_bin)
-head(predict(dummies, newdata = Madrid_Sale_num_sample_bin))
-```
-
-# Validación y control de calidad
-```{r}
-library("validate")
-
-Madrid_Sale_int |>
-  check_that(
-    HASLIFT >= 0,
-    PRICE >= 0,
-    HASNORTHORIENTATION + HASSOUTHORIENTATION + HASEASTORIENTATION + HASWESTORIENTATION == 1,
-    is.numeric(PRICE),
-    UNITPRICE * CONSTRUCTEDAREA == PRICE,
-    if (ROOMNUMBER > 3) PRICE > 100000,
-    nrow(.) >= 20000
-  ) |>
-  summary()
-```
-
-```{r}
-library("errorlocate")
-
-Madrid_Sale_red2 <- mutate(Madrid_Sale_int, price_bin = Hmisc::cut2(PRICE, g=4))
-
-rules <- validator(if (ROOMNUMBER >= 10) price_bin == "[502000,7138000]")
-(el <- locate_errors(Madrid_Sale_red2, rules) |>
-  summary(el))
-```
-
-```{r}
-library("dcmodify")
-out <- Madrid_Sale_red2 |>
-  modify_so(if (ROOMNUMBER >= 10 & price_bin != "[502000,7138000]") ROOMNUMBER <- 5)
-rules <- validator(if (ROOMNUMBER >= 10) price_bin == "[502000,7138000]")
-compare(rules, raw = Madrid_Sale_red2, modified = out)
 ```
 
