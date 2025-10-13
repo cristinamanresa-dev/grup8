@@ -9,10 +9,17 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+Lleguim les dades
+
+```{r}
+train <- read.csv("train_AED.csv")
+test <- read.csv("test_AED.csv")
+```
+
 # 4. Missings
 *Manejar correctamente los NA es esencial: eliminarlos puede reducir mucho el dataset, mientras que imputarlos incorrectamente puede introducir sesgos.*
 
-### 4.1 Generar Data amb NA's, nosaltres ja els tenim
+### 4.1 Generar Data amb NA's, nosaltres ja els tenim, es poden veure
 ```{r}
 colSums(is.na(train))
 ```
@@ -27,6 +34,7 @@ Si el valor p de la prova és inferior a 0 això vol dir que les dades amb NAs s
 
 ### 4.3 Patrons descriptius de NA en una bbdd
 #### Explorar les relacions de NA's
+No surt en compte perque tenim el maeix nombre de missings a totes les variables
 ```{r}
 library(visdat)
 library(ggplot2)
@@ -35,9 +43,9 @@ library(naniar)
 vis_dat(train)
 vis_miss(train)
 
-ggplot(train, aes(x = ,y = )) + 
+ggplot(train, aes(x = speechiness ,y = loudness)) + 
   geom_miss_point() +
-  face_wrap()
+  facet_wrap(~ song_duration_ms)
 ```
 
 #### Visualitzacio dels NA's per variables

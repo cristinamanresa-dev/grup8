@@ -24,7 +24,7 @@ Visualitzem les dades
 library(dlookr)
 dlookr::diagnose(train)
 ```
-S'observa que practicament totes les variables tenen 3956 missings.
+S'observa que totes les variables descriptives tenen 3956 missings. L'única que surten 0 missings és la variable explicativa que és la de song_popularity.
 
 Eliminem les observacions duplicades o irrellevants,
 ```{r}
@@ -36,27 +36,21 @@ train <- train[!duplicated(train),]
 # comprovem que els hem eliminar
 head(overview(train), n = 9)
 ```
+Explicar que hi ha 117 que son compltes, és a dir tenen tota la informació, 13063 observacions que tenen missings, etc. 
+
+
 # 3. Outliers
 Primerament, anem a detectar els valors atípics, amb les següents funcions. Per una banda per les variables numèriques i categòriques
 ```{r}
 library(dplyr)
 (num <- diagnose_numeric(train) %>% select(variables, outlier))
-(cat <- diagnose_category(train))
+(cat <- diagnose_category(train) %>% filter(!is.na(levels)))
 ```
-S'observa que per les variables númeriques tenim un nombre molt elevat d'outliers en la variable speechiness, que fa referència a la presència de paraules parlades. També veiem la de song_duration_ms i la de time_signature, on es fa referència al temps de la canço i el nombre de notes de cada compas. Tabé la loudness que és els valors de decibels de cada canço.
+S'observa que per les variables númeriques tenim un nombre molt elevat d'outliers en la variable speechiness, que fa referència a la presència de paraules parlades. També veiem la de song_duration_ms i la de time_signature, on es fa referència al temps de la canço i el nombre de notes de cada compas. També la loudness que és els valors de decibels de cada canço.
 
-## CAS UNIVARIANT (No fem res???)
-Analitzem variable per variable.
+Sobre les variables categòriques podem dir que la variable instrumentalness la categoria sese_veula podem considerar un valor atípic ja que nomès hi ha un cas, i en la resta de categòries en trobem mes casos. Per la resta de variables, no es troba res atípic.
 
-Mirem quines son les variables numèriques i quines la categoriques
-```{r}
-# Variables numèriques
-varNum <- names(train)[sapply(train, is.numeric)]
-
-# Variables categòriques (factors o caràcters)
-varCat <- names(train)[sapply(train, function(x) is.character(x) | is.factor(x))]
-
-```
+*Considarem que no es necessari el cas univariant ja que no trobem cap informació rellevant*
 
 ## CAS MULTIVAIRANT
 Ara mirem si els outliers és degut a la combinació de les variables.
@@ -67,25 +61,22 @@ Fem un scatterplot i altres gràfics en cas concrets de variables que vulguem
 ```{r}
 library(scatterplot3d)
 library(readr)
-# Hauriem de canviar les variables per les que vulguem
-scatterplot3d(train[,"speechiness"], train[, "song_duration_ms"],train[, "loudness"])
+#scatterplot3d(train[,"speechiness"], train[, "song_duration_ms"],train[, "loudness"])
 
 library(rgl)
-
-# Plot
-rgl::plot3d(x = train[, "speechiness"], y = train[, "song_duration_ms"], z = train[, "loudness"], 
-col = "black", type = 'p', radius = .1)
+#rgl::plot3d(x = train[, "speechiness"], y = train[, "song_duration_ms"], z = train[, "loudness"], 
+#col = "blue", type = 'p', radius = .1)
 
 library(plotly)
-
-(fig <- plotly::plot_ly(train, x = ~"speechiness", y = ~"song_duration_ms", z = ~"loudness", size = 1) %>%
+(fig <- plotly::plot_ly(train, x = ~song_duration_ms, y = ~speechiness, z = ~loudness, size = 1) %>% 
        add_markers())
 ```
+Es pot observar en el gràfic un clar núvol de punts, i forces punts que quede aïllats d'aquest núvol que es pot considerar outliers.
 
 Si ho volem fer de manera més general
 ```{r}
 library(mvoutlier)
-dades2 <- train; Y <- as.matrix(dades2)
+dades2 <- num; Y <- as.matrix(dades2)
 distances <- dd.plot(Y,quan=1/2, alpha=0.025)
 ```
 
@@ -120,6 +111,8 @@ head(summary(mvnoutliers, select = "outliers"))
 ```{r}
 train_num <- dplyr::select_if(train, is.numeric)
 train_num <- na.omit(train_num)
+train_num <- train_num %>%  mutate(across(where(is.integer), as.numeric))
+str(train_num)
 
 distancia_mahalanobis <- mahalanobis(train_num, colMeans(train_num), cov(train_num))
 plot(density(distancia_mahalanobis))
@@ -159,7 +152,7 @@ scatterplot3d(train[, "DC"], train[, "temp"], train[, "RH"],
 ```{r}
 library(chemometrics)
 
-dis <- chemometrics::Moutlier(train[, c("DC", "temp", "RH")], quantile = 0.99, plot = TRUE)
+dis <- chemometrics::Moutlier(train[, c("speechiness", "loudness", "song_duration_ms")], quantile = 0.99, plot = TRUE)
 
 par(mfrow = c(1, 1))
 plot(dis$md, dis$rd, type = "n")
