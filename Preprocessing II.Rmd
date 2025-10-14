@@ -28,6 +28,14 @@ Nosaltres ja tenim missings com hem vist abans.
 ### 4.2 Little test
 Ens permet detectar amb quin tipus de NA's ens trobem
 ```{r}
+apply(train, 2, function(x) length(unique(x)))
+
+#train <- dplyr::mutate_if(train, is.character, as.factor)
+```
+
+segueix sense funcionar
+```{r}
+#no ens funciona perque ens diu que no es pot calcular la matriu de covariancies 
 naniar::mcar_test(train)
 ```
 Si el valor p de la prova és inferior a 0 això vol dir que les dades amb NAs s’han generat aleatòriament. Les nostres son aleatories perque es 0.18.
@@ -43,30 +51,33 @@ library(naniar)
 vis_dat(train)
 vis_miss(train)
 
-ggplot(train, aes(x = speechiness ,y = loudness)) + 
-  geom_miss_point() +
-  facet_wrap(~ song_duration_ms)
+#no funciona i tarda molt a carregar
+# ggplot(train, aes(x = speechiness ,y = loudness)) + 
+ # geom_miss_point() +
+ # facet_wrap(~ song_duration_ms)
 ```
 
 #### Visualitzacio dels NA's per variables
 ```{r}
 gg_miss_var(train) + labs(y = "Look at all the missing ones")
 ```
+veiem que totes les variables tenen el mateix nombre de NA
 
 #### Detecció de NA's en la bbdd
+aixo ho podem anar fent provant amb diferents variables aviam que observem
 ```{r}
 aq_shadow <- bind_shadow(train)
 
 train %>%
   bind_shadow() %>%
-  group_by(Ozone_NA) %>%
-  summarise_at(.vars = "Solar.R",
+  group_by(song_duration_ms) %>%
+  summarise_at(.vars = "speechiness",
                .funs = c("mean", "sd", "var", "min", "max"),
                na.rm = TRUE)
 
 ggplot(train,
-       aes(x = ,
-           colour = Ozone_NA)) + 
+       aes(x = loudness,
+           colour = song_duration_ms)) + 
   geom_density()
 ```
 
@@ -85,20 +96,20 @@ miss_var_table(train)
 #### Imputació bàsica
 ```{r}
 #media
-train[, "imputed_Sepal.Length"] <- with(train, Hmisc::impute(Sepal.Length, mean))
+train[, "imputed_speechiness"] <- with(train, Hmisc::impute(speechiness, mean))
 #mediana
 pre_median <- preProcess(train, method = "medianImpute")
 imputed_median <- predict(pre_median, train)
 diagnose(imputed_median)
 #valor aleatori
-train[, "imputed_Sepal.Length2"] <- with(train, Hmisc::impute(Sepal.Length, 'random'))
+train[, "imputed_speechiness2"] <- with(train, Hmisc::impute(speechiness, 'random'))
 ```
 De manera similar podeu utilitzar la mediana min, max, per imputar el valor que manca.
 
 REpresenta la distribucuió a variables reals i d'imputacio a traves del grafics de densitat amb ggplot2
 ```{r}
 df_long <- train %>%
-  select(Sepal.Length, imputed_Sepal.Length, imputed_Sepal.Length2) %>%
+  select(speechiness, imputed_speechiness, imputed_speechiness2) %>%
   pivot_longer(cols = everything(), names_to = "Variable", values_to = "Valor")
 
 ggplot(df_long, aes(x = Valor, fill = Variable)) +
@@ -109,16 +120,22 @@ ggplot(df_long, aes(x = Valor, fill = Variable)) +
   theme_minimal() +
   scale_fill_manual(values = c("blue", "red", "green"))
 
-train[, c("imputed_Sepal.Length", "imputed_Sepal.Length2")] <- NULL
+train[, c("imputed_speechiness", "imputed_speechiness2")] <- NULL
 ```
+veiem que les mes similars son speechiness i la imputed2, pero que voldir?
 
-Una altra opció és usant el paquet argImpute
+no sarriba a veure la imputed 2
+
+
+Una altra opció és usant el paquet argImpute(nose quines variables ficar)
 ```{r}
 (impute_arg <- Hmisc::aregImpute(~ Sepal.Length + Sepal.Width + Petal.Length + Petal.Width +
                            Species, data = train, n.impute = 5))
 
 # la resta de codi es revisnat una variable en concret de la bbdd, per mirar el comortament suposu.
 ```
+
+A PARTIR DAQUI NO EM FUNCIONA 
 
 ### Multiple Iterative Regresson Imputation (MI method)
 Imputem els valors NA's segons aquest metode
