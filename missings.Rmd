@@ -75,136 +75,6 @@ La distribució de popularitat entre cançons amb i sense valor d’‘instrumen
 
 (aquest apartat com que no se ben be quines conclusions en podem treure no lhe fet)
 
-# imputacio basica
-
-```{r}
-#media
-train[, "imputed_speechiness"] <- with(train, Hmisc::impute(speechiness, mean))
-#mediana
-pre_median <- preProcess(train, method = "medianImpute")
-imputed_median <- predict(pre_median, train)
-diagnose(imputed_median)
-#valor aleatori
-train[, "imputed_speechiness2"] <- with(train, Hmisc::impute(speechiness, 'random'))
-```
-
-veiem que per la mediana ha creat un nou data set amb tots els vlaors de les variables numeiques imputats per la seva mediana 
-
-## representa la distribució a variables reals i d'imputació a treves del grafic de densitat
-
-```{r}
-library(dplyr)
-library(tidyr)
-
-df_long <- train %>%
-  select(speechiness, imputed_speechiness, imputed_speechiness2) %>%
-  pivot_longer(cols = everything(), 
-               names_to = "Variable", 
-               values_to = "Valor")
-
-
-ggplot(df_long, aes(x = Valor, fill = Variable)) +
-  geom_density(alpha = 0.3) +  # Transparencia para mejor visualización
-  labs(title = "Densidad de las tres variables",
-       x = "Valor",
-       y = "Densidad") +
-  theme_minimal() +
-  scale_fill_manual(values = c("blue", "red", "green"))
-```
-NO FUNCIONA AQUEST TROS DE CODI
-
-
-Una altra opció és usant el paquet argImpute(nose quines variables ficar)
-
-nomes es pot utilitzar en variables numeriques int o factors, sino no funciona i ens dona error, i sempre s'haurà d'incloure la variable song_popularitty per tal de que tingui una referencia a l'hora d'imputar 
-```{r}
-(impute_arg <- Hmisc::aregImpute(~ song_popularity + speechiness + loudness + danceability + song_duration_ms + energy + audio_valence 
-                           , data = train, n.impute = 5))
-```
-
-d'aqui en podem extreure varies conclusions rellevants, si el valor del r^2 es >0,6 vol dir que hi ha una bona prediccio i per tant es poden imputar relativament be, si esta en 0,2-0,3 tenen una predicció moderada i si es < a 0,1 es una mala predicció i llavrps les imputacions seran menys fiables i no es recomanat dur a terme una imputacio multiple 
-
-passem a un nou metode d'imputació 
-
-# multiple iterative regression imputation
-
-no ens funcionava pq tenim dues variables completameent iguals, com ara eren time_signature ii time_signature_cat, creem una nova base de dades i n'eliminem una per tal de poder dur a terme aquesta part 
-
-tambe estaria be provar si 
-```{r}
-train <- read.csv("train_AED.csv")
-
-mitrain <- train
-mitrain$time_signature_cat <- NULL
-mi_data <- mi::mi(mitrain, seed = 335) #segueix sense funcionar 
-
-summary(mi_data)
-plot(mi_data)
-par(ask = FALSE)
-
-mi_data@data
-```
-
-# media con una variable target
-
-```{r}
-#definim la varibale trget
-target <- "song_popularity"
-
-#definim la base de datos amb nas
-data <- subset(train, select = -c(get(target)))
-data <- missForest::prodNA(data, noNA = 0.1)
-data$song_popularity <- train[, target]
-
-#definim variables a imputar
-varImp <- colnames(data)[which(!colnames(data) %in% target)]
-
-#calcular las medias por grupo
-means <- aggregate(data[, varImp], list(data[, target]), mean, na.rm = TRUE)
-
-#impuar valores faltantes 
-for (c in varImp) {
-  for (g in means[, "Group.1"]) {
-    cond <- data[, target] == g  # Condición booleana en vez de which()
-    na_index <- is.na(data[, c]) & cond  # Seleccionar NA dentro del grupo
-    
-    # Asignar valores imputados
-    data[na_index, c] <- means[means[, "Group.1"] == g, c]
-  }
-}
-summary(data)
-
-
-```
-
-visualitzarem la dieferencia entre les imputacions 
-
-```{r}
-train[, "Tipo"] <- "original"
-data[, "Tipo"] <- "imputed"
-```
-
-unim en un mateix data frame
-
-```{r}
-data_long <- bind_rows(train, data)
-cols_numeric <- names(data_long)[sapply(data_long, is.numeric) & names(data_long) != "Tipo"]
-
-# Convert a large data
-data_long <- data_long %>%
-  pivot_longer(cols = all_of(cols_numeric), names_to = "Variable", values_to = "Valor")
-
-#CREEM EL GRAFIC
-ggplot(data_long, aes(x = Valor, fill = Tipo)) +
-  geom_density(alpha = 0.3) +  # Transparencia para comparación
-  facet_wrap(~Variable, scales = "free") +  # Un gráfico por variable
-  labs(title = "Comparación de Distribuciones: Original vs Imputado",
-       x = "Valor",
-       y = "Densidad") +
-  theme_minimal() +
-  scale_fill_manual(values = c("blue", "red"))
-```
-
 
 # imputació per MICE
 
@@ -251,22 +121,17 @@ veiem que els valors imputats no son massa diferents als valors originals, ho po
 
 ```{r}
 completeData <- mice::complete(imputed_Data, action = "long")
+completeData$time_signature_cat <- NULL
+
 summary(completeData)
 ```
 
 donem per bona la imputació per mice. ara haurem de passar a la imputació de les variables categoriques 
 
-```{r}
-str(train)
-```
 
 # KNN 
 
-per poder començar haurem de convertir la variable time_signature_cat a categorica, ja que no esta ben cpnvertida enn el data
-
-```{r}
-train <- read.csv("train_AED.csv")
-```
+per poder començar haurem de convertir la variable time_signature_cat a categorica, ja que no esta ben cpnvertida en el data
 
 ```{r}
 #  Carregar llibreria
@@ -285,12 +150,21 @@ if (!is.factor(train$time_signature_cat)) {
 #  Comprovació del tipus final de variables
 str(train)
 
+train_cat <- train[, sapply(train, is.factor)]
+summary(train_cat)
+
+# Fusionar datasets per columnes
+data_final <- cbind(completeData, train_cat)
+
+```
+
+
+```{r}
 #  Aplicar imputació KNN a tot el dataset
-imputed_data <- kNN(train, k = 5, imp_var = FALSE)
+imputed_data <- kNN(data_final, k = 5, imp_var = FALSE)
 
 #  Comprovar que no queden NA
 colSums(is.na(imputed_data))
-
 ```
 
 ```{r}
@@ -298,14 +172,15 @@ str(imputed_data)
 ```
 
 ```{r}
-# Solució: Convertir tots els factors a factors nets i coherents
-imputed_data[] <- lapply(imputed_data, function(x) {
-  if (is.factor(x)) {
-    x <- droplevels(x)    # Elimina nivells buits/inexistents
-    x <- as.factor(as.character(x))  # Reinicialitza el factor correctament
+
+# Solució robusta per arreglar factors després de kNN (VIM)
+for (col in names(imputed_data)) {
+  if (is.factor(imputed_data[[col]])) {
+    imputed_data[[col]] <- as.character(imputed_data[[col]])   # Convertir segur
+    imputed_data[[col]][imputed_data[[col]] == ""] <- NA       # Eliminar buits
+    imputed_data[[col]] <- as.factor(imputed_data[[col]])      # Tornar a factor
   }
-  return(x)
-})
+}
 
 
 ```
