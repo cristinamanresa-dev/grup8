@@ -1,0 +1,235 @@
+---
+title: "Outliers"
+author: "Cristina Manresa Ponsa"
+date: "2025-10-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=F, comment="", warnings=F)
+```
+
+# OUTLIERS
+
+Entrem les dades desprès de imputar els missings
+```{r}
+library(readr)
+train <- read_csv("train_mis.csv")
+```
+
+Fem una previa visualització de les dades
+```{r}
+library(dlookr)
+dlookr::diagnose(train)
+head(overview(train), n = 9)
+```
+Veiem que hi ha 31 observacions duplicades i per tant les eliminem.
+```{r}
+train <- train[!duplicated(train),]
+# comprovem que els hem eliminar
+head(overview(train), n = 9)
+```
+
+Anem a detctar els outliers
+```{r}
+library(dplyr)
+if (!is.factor(train$time_signature_cat)) {
+  train$time_signature_cat <- as.factor(train$time_signature_cat)
+}
+(num <- diagnose_numeric(train) %>% select(variables, outlier))
+(cat <- diagnose_category(train))
+```
+Veiem que tenim diferents variables numériques amb outliers, la que destaca mes és la variable speechniess. També tenim time_signature (780), song_duration_ms (635), loudness (481) que haurem de estudiar mes detalladament.
+
+```{r}
+tipus <- sapply(train, class)
+varNum <- names(tipus)[which(tipus %in% c("integer", "numeric"))]
+varCat <- names(tipus)[which(tipus %in% c("factor", "character"))]
+```
+
+Visualitzem els outliers
+```{r}
+library(ggplot2)
+
+for (v in varNum) {
+  print(
+    ggplot(train, aes_string(y = v)) +
+      geom_boxplot(fill = "steelblue") +
+      ggtitle(paste("Boxplot de", v))
+  )
+}
+
+```
+
+Es veuen els outliers que s'han dit abans, es podrien comentar mes detalladament.
+
+```{r}
+num$outlier_perc <- num$outlier / nrow(train) * 100
+num
+```
+
+Hauriem de fer transformacions sobre els outliers que hem trobat:
+*parlar-ho amb la laia*
+- logaritmica: quan siguin positius i molt asimetrics log(x+1)
+- arrel quadrad/cubica: positius ab menys asimetria sqrt(x)
+- z-score/min-max escalat per models scale(x)
+
+# distància de mahalanobis
+```{r}
+# Seleccionem només variables numèriques
+num_data <- train[, varNum]
+
+# Calculem la mitjana i la matriu de covariàncies
+center <- colMeans(num_data, na.rm = TRUE)
+cov_mat <- cov(num_data, use = "complete.obs")
+
+# Distància de Mahalanobis
+mahal_dist <- mahalanobis(num_data, center, cov_mat)
+
+# Afegim la distància al dataset
+train$mahalanobis_dist <- mahal_dist
+
+# Detecció d’outliers (usant el llindar del qui-quadrat)
+cutoff <- qchisq(0.975, df = ncol(num_data))
+train$outlier_mahal <- mahal_dist > cutoff
+table(train$outlier_mahal)
+
+```
+
+Veiem que tenim 671 observacions que són outliers segons la distància de mahalanobis.
+
+Si fem la robusta NO FUNCIONA
+```{r, eval = FALSE}
+library(robustbase)
+
+# Dades numèriques
+num_data <- train[, varNum]
+
+# Calculem la covariància robusta (MCD)
+mcd <- covMcd(num_data)
+
+# Distància robusta
+library(robustbase)
+mcd <- covMcd(num_data)
+robust_mahal <- mahalanobis(num_data, center = mcd$center, cov = mcd$cov)
+
+
+# Llindar Chi-quadrat
+cutoff_robust <- qchisq(0.975, df = ncol(num_data))
+
+# Afegeix al dataset
+train$robust_mahal <- robust_mahal
+train$outlier_robust <- robust_mahal > cutoff_robust
+
+# Recompte d’outliers robustos
+table(train$outlier_robust)
+
+# Percentatge
+mean(train$outlier_robust) * 100
+
+
+library(ggplot2)
+
+ggplot(train, aes(x = mahalanobis_dist, y = robust_mahal)) +
+  geom_point(aes(color = outlier_robust)) +
+  geom_vline(xintercept = cutoff, color = "red", linetype = "dashed") +
+  geom_hline(yintercept = cutoff_robust, color = "blue", linetype = "dashed") +
+  ggtitle("Mahalanobis clàssica vs robusta") +
+  theme_minimal()
+
+```
+
+Per les categoriques, es distancia de gower no crec que li acabi de garadar
+```{r}
+train <- train %>%
+  mutate(across(where(is.character), as.factor))
+sapply(train, class)
+
+library(cluster)
+gower_dist <- daisy(train, metric = "gower")
+
+install.packages("dbscan")
+library(dbscan)
+db <- dbscan(as.matrix(gower_dist), eps = 0.2, minPts = 5)
+train$outlier_gower <- db$cluster == 0
+
+table(train$outlier_gower)
+
+```
+# KNN (TRIGA MOLT A EXECUTAR-SE)
+```{r}
+train_fixed <- train %>%
+  mutate(across(where(is.character), as.factor))
+
+vars_knn <- c(varNum, varCat)
+data_knn <- train_fixed[, vars_knn]
+
+# CALCUL DISTANCIA GOWER MIXTA
+library(cluster)
+gower_dist <- daisy(data_knn, metric = "gower")
+
+gower_mat <- as.matrix(gower_dist)
+k <- 5
+knn_dist <- apply(gower_mat, 1, function(x) {
+  sort(x, partial = k)[k]  # distància al kè-ssim veí
+})
+train_fixed$knn_dist <- knn_dist
+
+# llindar (pots usar, per ex., el percentil 95)
+cutoff <- quantile(knn_dist, 0.95)
+train_fixed$outlier_knn <- knn_dist > cutoff
+
+table(train_fixed$outlier_knn)
+
+```
+
+# LOF (TAMBE TRIGA MOLT)
+```{r}
+library(cluster)
+train_fixed <- train %>%
+  mutate(across(where(is.character), as.factor))
+
+gower_dist <- daisy(train_fixed[, c(varNum, varCat)], metric = "gower")
+gower_mat <- as.matrix(gower_dist)
+
+library(dbscan)
+
+# Transformem distància en un objecte kNN
+knn <- kNNdist(as.matrix(gower_mat), k = 10)
+
+# Detecció amb LOF
+lof_scores <- lof(as.matrix(gower_mat), k = 10)
+
+```
+
+# ISOLATION FOREST
+```{r}
+install.packages("isotree")     # Implementació nativa en R, molt eficient
+library(isotree)
+```
+
+```{r}
+train_fixed <- train %>%
+  mutate(across(where(is.character), as.factor))
+
+# Seleccionem variables d’interès
+vars_iso <- c(varNum, varCat)
+data_iso <- train_fixed[, vars_iso]
+
+# Entrenem el model
+iso_model <- isolation.forest(data_iso, ntrees = 500, sample_size = 256)
+
+# Score d’aïllament
+iso_scores <- predict(iso_model, data_iso, type = "score")
+
+train_fixed$iso_score <- iso_scores
+
+# Outliers segons percentil 95
+cutoff <- quantile(iso_scores, 0.95)
+train_fixed$outlier_iso <- iso_scores > cutoff
+
+# Recompte
+table(train_fixed$outlier_iso)
+
+```
+Podem dir que hi ha un 5% ha identificat Isolation Forest del dataset és a típic, segons el llindar definit que el el 95. Es un percentatge que no es ni massa conservador ni massa permissiu. 
