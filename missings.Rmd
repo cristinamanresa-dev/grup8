@@ -252,6 +252,8 @@ Veiem que en comparacio amb amb el original amb el que tenim no canvia gaire
 
 Categoriques mirem distribucions
 ```{r}
+factor_cols <- names(train)[sapply(train, is.factor)]
+
 for(col in factor_cols){
   print(col)
   print(table(train[[col]], useNA = "ifany"))  # abans
@@ -262,3 +264,7 @@ for(col in factor_cols){
 Les dues últimes variables no se si acaba de ser del tot cohorent.
 
 Fem export de les dades finals
+```{r}
+write.csv(data_final, "train_mis.csv", row.names = FALSE)
+```
+
