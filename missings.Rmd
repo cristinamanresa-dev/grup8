@@ -49,6 +49,7 @@ train_shadow <- bind_shadow(train)
 
 aixo no ens dona cap mena de conclusio ni informacio ja que hi veiem molts na 
 ```{r}
+library(dplyr)
 train %>%
   bind_shadow() %>%
   group_by(speechiness) %>%
@@ -91,8 +92,8 @@ summary(train_numeric)
 
 quiCat <- which(lapply(train, class) %in% c("character", "factor"))
 (categories <- names(train)[quiCat])
-train2 <- subset(train, select = -c(get(categories)))
-summary(train2)
+#train2 <- subset(train, select = -c(get(categories))) # AQUI SURT UN ERROR
+#summary(train2)
 ```
 
 visualitzem els patrons dels nas 
@@ -100,7 +101,7 @@ visualitzem els patrons dels nas
 par(mfrow = c(1, 1))
 mice::md.pattern(train_numeric, rotate.names = TRUE)
 ```
-
+*surt el grafic molt extrany*
 
 a continuacaio realitzezm imputacio dels valors faltants de manera multivariada
 
@@ -123,65 +124,141 @@ veiem que els valors imputats no son massa diferents als valors originals, ho po
 completeData <- mice::complete(imputed_Data, action = "long")
 completeData$time_signature_cat <- NULL
 
+# Eliminar columnes .id i .imp si existeixen
+completeData <- completeData[, !names(completeData) %in% c(".id", ".imp")]
+
 summary(completeData)
 ```
 
 donem per bona la imputació per mice. ara haurem de passar a la imputació de les variables categoriques 
 
+Afeguim la bbdd total que tenim per ara.
+```{r}
+# Identificar columnes numèriques que existeixen a completeData
+num_cols <- intersect(names(train)[sapply(train, is.numeric)], names(completeData))
 
-# KNN 
+# Substituir només aquestes columnes
+train[, num_cols] <- completeData[, num_cols, drop = FALSE]
+
+# Comprovar resultat
+str(train)
+summary(train)
+```
+
+# Categoriques
 
 per poder començar haurem de convertir la variable time_signature_cat a categorica, ja que no esta ben cpnvertida en el data
 
 ```{r}
-#  Carregar llibreria
-library(VIM)
-
-#  Convertir automàticament totes les columnes de tipus "character" a "factor"
 train[] <- lapply(train, function(x) {
   if (is.character(x)) as.factor(x) else x
 })
 
-#  Assegurar que time_signature_cat és factor (per si ve com integer)
 if (!is.factor(train$time_signature_cat)) {
   train$time_signature_cat <- as.factor(train$time_signature_cat)
 }
 
-#  Comprovació del tipus final de variables
+train_num <- train
+train_num[] <- lapply(train_num, function(x) {
+  if (is.factor(x)) as.numeric(x) else x
+})
+
 str(train)
+summary(train)
+```
+# MissForest
+```{r}
+library(missForest)
 
-train_cat <- train[, sapply(train, is.factor)]
-summary(train_cat)
+# Preparar train: factors i numèriques
+train_mf <- train  # copia del dataset
 
-# Fusionar datasets per columnes
-data_final <- cbind(completeData, train_cat)
+# Si tens variables numèriques ja imputades amb MICE, les pots deixar com a estàtiques
+# missForest omplirà només els NA que queden (incloses les categòriques)
+
+# Imputació amb missForest
+set.seed(123)  # per reproducibilitat
+imputed <- missForest(train_mf, verbose = TRUE)
+
+# Obtenir dataset imputat
+data_final <- imputed$ximp
+
+# Comprovar que no queden NA
+colSums(is.na(data_final))
+str(data_final)
+summary(data_final)
 
 ```
 
+#KNN - NO funciona triga molt a fer-se
+```{r, eval=FALSE}
+library(caret)
 
-```{r}
-#  Aplicar imputació KNN a tot el dataset
-imputed_data <- kNN(data_final, k = 5, imp_var = FALSE)
+# Factors a imputar
+factor_cols <- names(train)[sapply(train, is.factor)]
 
-#  Comprovar que no queden NA
-colSums(is.na(imputed_data))
-```
+# Només factors amb NA
+factor_na <- factor_cols[colSums(is.na(train[, factor_cols, drop = FALSE])) > 0]
 
-```{r}
-str(imputed_data)
-```
+# Convertir factors a numèric
+train_num <- train[, factor_na, drop = FALSE]
+train_num[] <- lapply(train_num, as.numeric)
 
-```{r}
+# Seleccionar predictors numèrics rellevants (reduït per velocitat)
+num_preds <- names(completeData)[1:min(5, ncol(completeData))]  # p. ex. 5 predictors més importants
+data_knn <- cbind(train_num, completeData[, num_preds, drop = FALSE])
 
-# Solució robusta per arreglar factors després de kNN (VIM)
-for (col in names(imputed_data)) {
-  if (is.factor(imputed_data[[col]])) {
-    imputed_data[[col]] <- as.character(imputed_data[[col]])   # Convertir segur
-    imputed_data[[col]][imputed_data[[col]] == ""] <- NA       # Eliminar buits
-    imputed_data[[col]] <- as.factor(imputed_data[[col]])      # Tornar a factor
-  }
+# KNN imputació
+preProc <- preProcess(data_knn, method = "knnImpute", k = 3)
+imputed <- predict(preProc, newdata = data_knn)
+
+# Tornar factors originals
+for(col in factor_na){
+  n_levels <- length(levels(train[[col]]))
+  x <- round(imputed[[col]])
+  x[x < 1] <- 1
+  x[x > n_levels] <- n_levels
+  imputed[[col]] <- factor(x, levels = 1:n_levels, labels = levels(train[[col]]))
 }
 
+# Substituir factors imputats al train
+train[, factor_na] <- imputed[, factor_na, drop = FALSE]
+
+# Comprovar
+colSums(is.na(train[, factor_na]))
 
 ```
 
+Anem a mirar si hi ha coherència amb els valors imputats:
+
+```{r}
+colSums(is.na(data_final))
+```
+No tenim cap variable amb NA's
+
+Numeriques, mirem les distribucions (CREC QUE NO FA FALTA)
+```{r}
+numeric_cols <- names(data_final)[sapply(data_final, is.numeric)]
+
+# Histogrames comparant abans i després (si tens el dataset original)
+par(mfrow=c(2,2))  # per veure diversos gràfics junts
+for(col in numeric_cols){
+  hist(train[[col]], main=paste(col, "original"), col="lightblue")
+  hist(data_final[[col]], main=paste(col, "imputat"), col="pink")
+}
+
+```
+Veiem que en comparacio amb amb el original amb el que tenim no canvia gaire
+
+Categoriques mirem distribucions
+```{r}
+for(col in factor_cols){
+  print(col)
+  print(table(train[[col]], useNA = "ifany"))  # abans
+  print(table(data_final[[col]]))              # després
+}
+
+```
+Les dues últimes variables no se si acaba de ser del tot cohorent.
+
+Fem export de les dades finals
