@@ -15,6 +15,7 @@ Entrem les dades desprès de imputar els missings
 ```{r}
 library(readr)
 train <- read_csv("train_mis.csv")
+test <- read_csv("test_mis.csv")
 ```
 
 Fem una previa visualització de les dades
@@ -23,11 +24,24 @@ library(dlookr)
 dlookr::diagnose(train)
 head(overview(train), n = 9)
 ```
+Ara per test,
+```{r}
+library(dlookr)
+dlookr::diagnose(test)
+head(overview(test), n = 9)
+```
+
 Veiem que hi ha 31 observacions duplicades i per tant les eliminem.
 ```{r}
 train <- train[!duplicated(train),]
 # comprovem que els hem eliminar
 head(overview(train), n = 9)
+```
+El mateix per la bbdd de test
+```{r}
+test <- test[!duplicated(test),]
+# comprovem que els hem eliminar
+head(overview(test), n = 9)
 ```
 
 Anem a detctar els outliers
@@ -41,10 +55,27 @@ if (!is.factor(train$time_signature_cat)) {
 ```
 Veiem que tenim diferents variables numériques amb outliers, la que destaca mes és la variable speechniess. També tenim time_signature (780), song_duration_ms (635), loudness (481) que haurem de estudiar mes detalladament.
 
+Ho fem per test
+```{r}
+library(dplyr)
+if (!is.factor(test$time_signature_cat)) {
+  test$time_signature_cat <- as.factor(test$time_signature_cat)
+}
+(num_test <- diagnose_numeric(test) %>% select(variables, outlier))
+(cat_test <- diagnose_category(test))
+```
+Veiem que tenim diferents variables numériques amb outliers, la que destaca mes és la variable speechniess. També tenim time_signature (780), song_duration_ms (635), loudness (481) que haurem de estudiar mes detalladament.
+
 ```{r}
 tipus <- sapply(train, class)
 varNum <- names(tipus)[which(tipus %in% c("integer", "numeric"))]
 varCat <- names(tipus)[which(tipus %in% c("factor", "character"))]
+```
+
+```{r}
+tipus_test <- sapply(test, class)
+varNum_test <- names(tipus_test)[which(tipus %in% c("integer", "numeric"))]
+varCat_test <- names(tipus_test)[which(tipus %in% c("factor", "character"))]
 ```
 
 Visualitzem els outliers
@@ -64,8 +95,27 @@ for (v in varNum) {
 Es veuen els outliers que s'han dit abans, es podrien comentar mes detalladament.
 
 ```{r}
+library(ggplot2)
+
+for (v in varNum_test) {
+  print(
+    ggplot(test, aes_string(y = v)) +
+      geom_boxplot(fill = "steelblue") +
+      ggtitle(paste("Boxplot de", v))
+  )
+}
+
+```
+Es veuen els outliers que s'han dit abans, es podrien comentar mes detalladament.
+
+```{r}
 num$outlier_perc <- num$outlier / nrow(train) * 100
 num
+```
+
+```{r}
+num_test$outlier_perc <- num_test$outlier / nrow(test) * 100
+num_test
 ```
 
 Hauriem de fer transformacions sobre els outliers que hem trobat:
@@ -73,8 +123,10 @@ Hauriem de fer transformacions sobre els outliers que hem trobat:
 - logaritmica: quan siguin positius i molt asimetrics log(x+1)
 - arrel quadrad/cubica: positius ab menys asimetria sqrt(x)
 - z-score/min-max escalat per models scale(x)
+*En sergi ha dit que no falta que ho fem, perque ja ho veurem quan fem el model*
 
 # distància de mahalanobis
+Per train
 ```{r}
 # Seleccionem només variables numèriques
 num_data <- train[, varNum]
@@ -97,6 +149,30 @@ table(train$outlier_mahal)
 ```
 
 Veiem que tenim 671 observacions que són outliers segons la distància de mahalanobis.
+
+Per test
+```{r}
+# Seleccionem només variables numèriques
+num_data_test <- test[, varNum_test]
+
+# Calculem la mitjana i la matriu de covariàncies
+center_test <- colMeans(num_data_test, na.rm = TRUE)
+cov_mat_test <- cov(num_data_test, use = "complete.obs")
+
+# Distància de Mahalanobis
+mahal_dist_test <- mahalanobis(num_data_test, center_test, cov_mat_test)
+
+# Afegim la distància al dataset
+test$mahalanobis_dist <- mahal_dist_test
+
+# Detecció d’outliers (usant el llindar del qui-quadrat)
+cutoff_test <- qchisq(0.975, df = ncol(num_data_test))
+test$outlier_mahal <- mahal_dist_test > cutoff_test
+table(test$outlier_mahal)
+
+```
+
+Veiem que tenim 671 observacions que són outliers segons la distància de mahalanobis, tan per train com per test.
 
 Si fem la robusta NO FUNCIONA
 ```{r, eval = FALSE}
@@ -138,6 +214,7 @@ ggplot(train, aes(x = mahalanobis_dist, y = robust_mahal)) +
   theme_minimal()
 
 ```
+*faltaria fer-ho per test*
 
 Per les categoriques, es distancia de gower no crec que li acabi de garadar
 ```{r}
@@ -156,7 +233,7 @@ train$outlier_gower <- db$cluster == 0
 table(train$outlier_gower)
 
 ```
-# KNN (TRIGA MOLT A EXECUTAR-SE)
+# KNN (TRIGA MOLT A EXECUTAR-SE) NO FET PER TEST
 ```{r}
 train_fixed <- train %>%
   mutate(across(where(is.character), as.factor))
@@ -183,7 +260,7 @@ table(train_fixed$outlier_knn)
 
 ```
 
-# LOF (TAMBE TRIGA MOLT)
+# LOF (TAMBE TRIGA MOLT) NO FET PER TEST
 ```{r}
 library(cluster)
 train_fixed <- train %>%
@@ -208,6 +285,7 @@ install.packages("isotree")     # Implementació nativa en R, molt eficient
 library(isotree)
 ```
 
+Per train
 ```{r}
 train_fixed <- train %>%
   mutate(across(where(is.character), as.factor))
@@ -233,3 +311,29 @@ table(train_fixed$outlier_iso)
 
 ```
 Podem dir que hi ha un 5% ha identificat Isolation Forest del dataset és a típic, segons el llindar definit que el el 95. Es un percentatge que no es ni massa conservador ni massa permissiu. 
+
+Per test
+```{r}
+test_fixed_test <- test %>%
+  mutate(across(where(is.character), as.factor))
+
+# Seleccionem variables d’interès
+vars_iso_test <- c(varNum_test, varCat_test)
+data_iso_test <- test_fixed_test[, vars_iso_test]
+
+# Entrenem el model
+iso_model_test <- isolation.forest(data_iso_test, ntrees = 500, sample_size = 256)
+
+# Score d’aïllament
+iso_scores_test <- predict(iso_model_test, data_iso_test, type = "score")
+
+test_fixed_test$iso_score_test <- iso_scores_test
+
+# Outliers segons percentil 95
+cutoff_test <- quantile(iso_scores_test, 0.95)
+test_fixed_test$outlier_iso <- iso_scores_test > cutoff_test
+
+# Recompte
+table(test_fixed_test$outlier_iso)
+
+```
