@@ -27,6 +27,8 @@ library(naniar)
 
 vis_dat(train);
 vis_miss(train)
+vis_dat(test);
+vis_miss(test)
 ```
 
 amb aixo podem observar que no hi ha cap linia on siguin tot missings, per tant no fa falta eliminar cap fila 
@@ -40,10 +42,16 @@ gg_miss_var(train) + labs(y = "Look at all the missing ones")
 ```
 veiem que totes les variables contenen el mateix nombre de missings
 
+```{r}
+gg_miss_var(test) + labs(y = "Look at all the missing ones")
+```
+veiem que totes les variables contenen el mateix nombre de missings
+
 ## deteccio dels nas en la base de dades 
 
 ```{r}
 train_shadow <- bind_shadow(train)
+test_shadow <- bind_shadow(test)
 ```
 
 
@@ -56,15 +64,30 @@ train %>%
   summarise_at(.vars = "loudness",
                .funs = c("mean", "sd", "var", "min", "max"),
                na.rm = TRUE)
+
+library(dplyr)
+test %>%
+  bind_shadow() %>%
+  group_by(speechiness) %>%
+  summarise_at(.vars = "loudness",
+               .funs = c("mean", "sd", "var", "min", "max"),
+               na.rm = TRUE)
 ```
 
 ```{r}
 str(train)
+str(test)
 ```
 
 si ho fem amb alguna variable numerica no ens donara be, s'ha de fer amb una variable factor
 ```{r}
 ggplot(train_shadow,
+       aes(x = song_popularity,
+           colour = speechiness_NA)) + 
+  geom_density()
+
+# no es pot fer perque no hi ha la varibale resposta
+ggplot(test_shadow,
        aes(x = song_popularity,
            colour = speechiness_NA)) + 
   geom_density()
@@ -81,6 +104,7 @@ La distribució de popularitat entre cançons amb i sense valor d’‘instrumen
 
 ```{r}
 train <- read.csv("train_AED.csv")
+test <- read.csv("test_AED.csv")
 ```
 
 Eliminamos las variables categoricas
@@ -96,21 +120,40 @@ quiCat <- which(lapply(train, class) %in% c("character", "factor"))
 #summary(train2)
 ```
 
+
+```{r}
+# Manté només les variables numèriques
+test_numeric <- test[, sapply(test, is.numeric)]
+summary(test_numeric)
+
+quiCat <- which(lapply(test, class) %in% c("character", "factor"))
+(categories <- names(test)[quiCat])
+#test2 <- subset(test, select = -c(get(categories))) # AQUI SURT UN ERROR
+#summary(test2)
+```
+
 visualitzem els patrons dels nas 
 ```{r}
 par(mfrow = c(1, 1))
 mice::md.pattern(train_numeric, rotate.names = TRUE)
 ```
 *surt el grafic molt extrany*
-
+```{r}
+par(mfrow = c(1, 1))
+mice::md.pattern(test_numeric, rotate.names = TRUE)
+```
 a continuacaio realitzezm imputacio dels valors faltants de manera multivariada
 
 ```{r}
 imputed_Data <- mice::mice(train_numeric, m=5, maxit = 50, method = 'pmm', seed = 500)
 ```
+```{r}
+imputed_Data_Test <- mice::mice(test_numeric, m=5, maxit = 50, method = 'pmm', seed = 500)
+```
 
 ```{r}
 summary(imputed_Data)
+summary(imputed_Data_Test)
 ```
 
 inspeccionamos la calidad de las imputaciones 
@@ -119,6 +162,11 @@ mice::stripplot(imputed_Data, loudness, pch = 19, xlab = "Imputation number")
 ```
 
 veiem que els valors imputats no son massa diferents als valors originals, ho podem anar comprovant variable per varibale i aixi saber si ha sigut un bon metode per imputar
+
+```{r}
+mice::stripplot(imputed_Data_Test, loudness, pch = 19, xlab = "Imputation number")
+```
+
 
 ```{r}
 completeData <- mice::complete(imputed_Data, action = "long")
@@ -132,6 +180,16 @@ summary(completeData)
 
 donem per bona la imputació per mice. ara haurem de passar a la imputació de les variables categoriques 
 
+```{r}
+completeData_Test <- mice::complete(imputed_Data_Test, action = "long")
+completeData_Test$time_signature_cat <- NULL
+
+# Eliminar columnes .id i .imp si existeixen
+completeData_Test <- completeData_Test[, !names(completeData_Test) %in% c(".id", ".imp")]
+
+summary(completeData_Test)
+```
+
 Afeguim la bbdd total que tenim per ara.
 ```{r}
 # Identificar columnes numèriques que existeixen a completeData
@@ -143,6 +201,17 @@ train[, num_cols] <- completeData[, num_cols, drop = FALSE]
 # Comprovar resultat
 str(train)
 summary(train)
+```
+```{r}
+# Identificar columnes numèriques que existeixen a completeData
+num_cols <- intersect(names(test)[sapply(test, is.numeric)], names(completeData_Test))
+
+# Substituir només aquestes columnes
+test[, num_cols] <- completeData_Test[, num_cols, drop = FALSE]
+
+# Comprovar resultat
+str(test)
+summary(test)
 ```
 
 # Categoriques
@@ -166,6 +235,25 @@ train_num[] <- lapply(train_num, function(x) {
 str(train)
 summary(train)
 ```
+
+```{r}
+test[] <- lapply(test, function(x) {
+  if (is.character(x)) as.factor(x) else x
+})
+
+if (!is.factor(test$time_signature_cat)) {
+  test$time_signature_cat <- as.factor(test$time_signature_cat)
+}
+
+test_num <- test
+test_num[] <- lapply(test_num, function(x) {
+  if (is.factor(x)) as.numeric(x) else x
+})
+
+str(test)
+summary(test)
+```
+
 # MissForest
 ```{r}
 library(missForest)
@@ -187,6 +275,29 @@ data_final <- imputed$ximp
 colSums(is.na(data_final))
 str(data_final)
 summary(data_final)
+
+```
+
+```{r}
+library(missForest)
+
+# Preparar train: factors i numèriques
+test_mf <- test  # copia del dataset
+
+# Si tens variables numèriques ja imputades amb MICE, les pots deixar com a estàtiques
+# missForest omplirà només els NA que queden (incloses les categòriques)
+
+# Imputació amb missForest
+set.seed(123)  # per reproducibilitat
+imputed <- missForest(test_mf, verbose = TRUE)
+
+# Obtenir dataset imputat
+data_final_test <- imputed$ximp
+
+# Comprovar que no queden NA
+colSums(is.na(data_final_test))
+str(data_final_test)
+summary(data_final_test)
 
 ```
 
@@ -236,6 +347,11 @@ colSums(is.na(data_final))
 ```
 No tenim cap variable amb NA's
 
+```{r}
+colSums(is.na(data_final_test))
+```
+No tenim cap variable amb NA's
+
 Numeriques, mirem les distribucions (CREC QUE NO FA FALTA)
 ```{r}
 numeric_cols <- names(data_final)[sapply(data_final, is.numeric)]
@@ -245,6 +361,20 @@ par(mfrow=c(2,2))  # per veure diversos gràfics junts
 for(col in numeric_cols){
   hist(train[[col]], main=paste(col, "original"), col="lightblue")
   hist(data_final[[col]], main=paste(col, "imputat"), col="pink")
+}
+
+```
+Veiem que en comparacio amb amb el original amb el que tenim no canvia gaire
+
+Ara per Test, Numeriques, mirem les distribucions (CREC QUE NO FA FALTA)
+```{r}
+numeric_cols <- names(data_final_test)[sapply(data_final_test, is.numeric)]
+
+# Histogrames comparant abans i després (si tens el dataset original)
+par(mfrow=c(2,2))  # per veure diversos gràfics junts
+for(col in numeric_cols){
+  hist(test[[col]], main=paste(col, "original"), col="lightblue")
+  hist(data_final_test[[col]], main=paste(col, "imputat"), col="pink")
 }
 
 ```
@@ -263,8 +393,23 @@ for(col in factor_cols){
 ```
 Les dues últimes variables no se si acaba de ser del tot cohorent.
 
+
+Categoriques mirem distribucions
+```{r}
+factor_cols <- names(test)[sapply(test, is.factor)]
+
+for(col in factor_cols){
+  print(col)
+  print(table(test[[col]], useNA = "ifany"))  # abans
+  print(table(data_final_test[[col]]))              # després
+}
+
+```
+Les dues últimes variables no se si acaba de ser del tot cohorent.
+
 Fem export de les dades finals
 ```{r}
 write.csv(data_final, "train_mis.csv", row.names = FALSE)
+write.csv(data_final, "test_mis.csv", row.names = FALSE)
 ```
 
