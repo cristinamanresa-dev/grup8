@@ -1,0 +1,184 @@
+---
+title: "Associació de Variables"
+author: "Cristina Manresa Ponsa"
+date: "2025-10-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, comment="", warning=FALSE)
+```
+
+Entrem les dades ja preprocessades
+```{r}
+library(readr)
+train <- read_csv("train_mis.csv")
+test <- read_csv("test_mis.csv")
+```
+
+Instal·lem paquets que podem necessitar
+```{r}
+#install.packages("arules")
+#install.packages("arulesViz")
+#install.packages("tidyverse")
+#install.packages("FactoMineR")
+library(arules)
+library(arulesViz)
+library(FactoMineR)
+library(tidyverse)
+```
+
+Necessitem canvair totes les variables a factors per aixo anem a crear primer els nivells de les numeriques perque tingui mes sentit:
+```{r}
+#TRAIN
+train$time_signature_cat <- as.factor(train$time_signature_cat)
+
+train <- train %>%
+  mutate(across(where(is.numeric), ~ cut(., breaks = 3, labels = c("baix", "mitjà", "alt"))))
+
+train[] <- lapply(train, function(x) {
+  if (is.numeric(x) || is.character(x)) as.factor(x) else x
+})
+sapply(train, class)
+
+# TEST
+test$time_signature_cat <- as.factor(test$time_signature_cat)
+
+test <- test %>%
+  mutate(across(where(is.numeric), ~ cut(., breaks = 3, labels = c("baix", "mitjà", "alt"))))
+
+test[] <- lapply(test, function(x) {
+  if (is.numeric(x) || is.character(x)) as.factor(x) else x
+})
+sapply(test, class)
+```
+
+```{r}
+dim(train)
+str(train)
+summary(train)
+names(train)
+head(train)
+```
+
+```{r}
+dim(test)
+str(test)
+summary(test)
+names(test)
+head(test)
+```
+
+Anem a transformar amb les transaccions
+Pel train
+```{r}
+
+for (j in 1:ncol(train)) {
+  if(is.logical(train[[j]])){
+    train[,j]<- as.factor(train[[j]])
+  }
+}
+
+library(arules)
+train_2 <- as(train, "transactions")
+train_2
+```
+Es veu que tenim 13186 transaccions i 16745 items.
+
+Anem a estudiar amb aquesta transformacio
+```{r}
+summary(train_2)
+class(train_2)
+```
+
+Ara ho fem per test
+```{r}
+for (j in 1:ncol(test)) {
+  if(is.logical(test[[j]])){
+    test[,j]<- as.factor(test[[j]])
+  }
+}
+library(arules)
+test_2 <- as(test, "transactions")
+test_2
+```
+Es veu que tenim 13186 transaccions i 16745 items. Com en el train
+
+Anem a estudiar amb aquesta transformacio
+```{r}
+summary(test_2)
+class(test_2)
+```
+
+Fem la funció inspect
+```{r}
+# train
+inspect(train_2[1:6])
+transactionInfo(train_2[1:10])
+SIZE <- size(train_2)
+summary(SIZE)
+quantile(SIZE, probs = seq(0,1,0.1))
+data.frame(SIZE) %>%
+  ggplot(aes(x = SIZE)) +
+  geom_histogram() +
+  labs(title = "Distribución del tamaño de las transacciones",
+       x = "Tamaño") +
+  theme_bw()
+
+# test
+inspect(test_2[1:6])
+transactionInfo(test_2[1:10])
+SIZE <- size(test_2)
+summary(SIZE)
+quantile(SIZE, probs = seq(0,1,0.1))
+data.frame(SIZE) %>%
+  ggplot(aes(x = SIZE)) +
+  geom_histogram() +
+  labs(title = "Distribución del tamaño de las transacciones",
+       x = "Tamaño") +
+  theme_bw()
+```
+
+Seguidament mirem el suport dels items
+```{r}
+# per train
+itemFrequency(train_2)
+#itemFrequencyPlot(train_2, topN=5, cex.names=0.5)
+itemFrequencyPlot(train_2,cex.names=0.4)
+itemFrequencyPlot(train_2, support=0.01, cex.names = 0.5)
+itemFrequencyPlot(train_2,type="absolute", cex.names = 0.3)
+itemFrequencyPlot(train_2, topN=100,type="absolute", cex.names = 0.6)
+frequency_items <- itemFrequency(x = train_2, type = "relative")
+frequency_items %>% sort(decreasing = TRUE) %>% head(5)
+
+# per test
+itemFrequency(test_2)
+#itemFrequencyPlot(test_2, topN=5, cex.names=0.5)
+itemFrequencyPlot(test_2,cex.names=0.4)
+itemFrequencyPlot(test_2, support=0.01, cex.names = 0.5)
+itemFrequencyPlot(test_2,type="absolute", cex.names = 0.3)
+itemFrequencyPlot(test_2, topN=100,type="absolute", cex.names = 0.6)
+frequency_items <- itemFrequency(x = test_2, type = "relative")
+frequency_items %>% sort(decreasing = TRUE) %>% head(5)
+```
+
+Ara mirarem de trobar les normes de associació
+```{r}
+library(arules)
+
+# Generar regles d'associació
+rules <- apriori(train_2, parameter = list(supp = 0.01, conf = 0.8))
+
+# Veure les primeres regles
+inspect(head(sort(rules, by = "confidence"), 10))  # Top 10 per confiança
+inspect(head(sort(rules, by = "support"), 10))     # Top 10 per suport
+
+summary(rules)
+
+# resumim les regles
+rules_pruned <- rules[!is.redundant(rules)]
+inspect(head(sort(rules_pruned, by = "lift"), 10))
+
+
+```
+
