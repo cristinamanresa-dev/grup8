@@ -150,7 +150,10 @@ itemFrequencyPlot(train_2,type="absolute", cex.names = 0.3)
 itemFrequencyPlot(train_2, topN=100,type="absolute", cex.names = 0.6)
 frequency_items <- itemFrequency(x = train_2, type = "relative")
 frequency_items %>% sort(decreasing = TRUE) %>% head(5)
+```
 
+
+```{r}
 # per test
 itemFrequency(test_2)
 #itemFrequencyPlot(test_2, topN=5, cex.names=0.5)
@@ -181,4 +184,22 @@ inspect(head(sort(rules_pruned, by = "lift"), 10))
 
 
 ```
+Per test
+```{r}
+library(arules)
 
+# Generar regles d'associació
+rules <- apriori(test_2, parameter = list(supp = 0.01, conf = 0.8))
+
+# Veure les primeres regles
+inspect(head(sort(rules, by = "confidence"), 10))  # Top 10 per confiança
+inspect(head(sort(rules, by = "support"), 10))     # Top 10 per suport
+
+summary(rules)
+
+# resumim les regles
+rules_pruned <- rules[!is.redundant(rules)]
+inspect(head(sort(rules_pruned, by = "lift"), 10))
+
+
+```

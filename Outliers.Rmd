@@ -20,6 +20,7 @@ test <- read_csv("test_mis.csv")
 
 Fem una previa visualització de les dades
 ```{r}
+# install.packages("dlookr")
 library(dlookr)
 dlookr::diagnose(train)
 head(overview(train), n = 9)
@@ -234,7 +235,7 @@ table(train$outlier_gower)
 
 ```
 # KNN (TRIGA MOLT A EXECUTAR-SE) NO FET PER TEST
-```{r}
+```{r, eval=FALSE}
 train_fixed <- train %>%
   mutate(across(where(is.character), as.factor))
 
@@ -261,7 +262,7 @@ table(train_fixed$outlier_knn)
 ```
 
 # LOF (TAMBE TRIGA MOLT) NO FET PER TEST
-```{r}
+```{r, eval=FALSE}
 library(cluster)
 train_fixed <- train %>%
   mutate(across(where(is.character), as.factor))
