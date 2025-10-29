@@ -12,8 +12,8 @@ knitr::opts_chunk$set(echo = TRUE, message=FALSE, comment="", warning=FALSE)
 Entrem les dades ja preprocessades
 ```{r}
 library(readr)
-train <- read_csv("train_mis.csv")
-test <- read_csv("test_mis.csv")
+train <- read_csv("train_pre.csv")
+test <- read_csv("test_pre.csv")
 ```
 
 Instal·lem paquets que podem necessitar
@@ -31,8 +31,6 @@ library(tidyverse)
 Necessitem canvair totes les variables a factors per aixo anem a crear primer els nivells de les numeriques perque tingui mes sentit:
 ```{r}
 #TRAIN
-train$time_signature_cat <- as.factor(train$time_signature_cat)
-
 train <- train %>%
   mutate(across(where(is.numeric), ~ cut(., breaks = 3, labels = c("baix", "mitjà", "alt"))))
 
@@ -42,8 +40,6 @@ train[] <- lapply(train, function(x) {
 sapply(train, class)
 
 # TEST
-test$time_signature_cat <- as.factor(test$time_signature_cat)
-
 test <- test %>%
   mutate(across(where(is.numeric), ~ cut(., breaks = 3, labels = c("baix", "mitjà", "alt"))))
 
@@ -83,7 +79,7 @@ library(arules)
 train_2 <- as(train, "transactions")
 train_2
 ```
-Es veu que tenim 13186 transaccions i 16745 items.
+Es veu que tenim 13186 transaccions i 51 items.
 
 Anem a estudiar amb aquesta transformacio
 ```{r}
@@ -102,7 +98,7 @@ library(arules)
 test_2 <- as(test, "transactions")
 test_2
 ```
-Es veu que tenim 13186 transaccions i 16745 items. Com en el train
+Es veu que tenim 5649 transaccions i 48 items. Com en el train
 
 Anem a estudiar amb aquesta transformacio
 ```{r}
@@ -170,7 +166,7 @@ Ara mirarem de trobar les normes de associació
 library(arules)
 
 # Generar regles d'associació
-rules <- apriori(train_2, parameter = list(supp = 0.01, conf = 0.8))
+rules <- apriori(train_2, parameter = list(supp = 0.01, conf = 0.8, minlen=2))
 
 # Veure les primeres regles
 inspect(head(sort(rules, by = "confidence"), 10))  # Top 10 per confiança
@@ -189,7 +185,7 @@ Per test
 library(arules)
 
 # Generar regles d'associació
-rules <- apriori(test_2, parameter = list(supp = 0.01, conf = 0.8))
+rules <- apriori(test_2, parameter = list(supp = 0.01, conf = 0.8, minlen=2))
 
 # Veure les primeres regles
 inspect(head(sort(rules, by = "confidence"), 10))  # Top 10 per confiança
