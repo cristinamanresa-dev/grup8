@@ -1,0 +1,632 @@
+---
+title: "selecció de variables memd"
+author: "Laia ribes"
+date: "2025-10-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+hem de llegir les dades
+
+```{r}
+tu_data <- read.csv("train_mis.csv")
+
+# ¿Podrías ejecutar y decirme los resultados?
+str(tu_data)
+# o
+glimpse(tu_data)
+
+# Dimensión
+dim(tu_data)
+
+# Tipos de variables
+sapply(tu_data, class)
+```
+
+#començarem fent un famd
+
+```{r}
+library(FactoMineR)
+library(factoextra)
+library(tidyverse)
+
+# 1. PREPARACIÓN PARA FAMD - Convertir variables a tipos correctos
+data_prepared <- tu_data %>%
+  mutate(
+    # Convertir a factor las variables categóricas
+    liveness = as.factor(liveness),
+    tempo = as.factor(tempo),
+    acousticness = as.factor(acousticness),
+    instrumentalness = as.factor(instrumentalness),
+    time_signature_cat = as.factor(time_signature_cat),
+    # key y audio_mode probablemente sean categóricas también
+    key = as.factor(key),
+    audio_mode = as.factor(audio_mode),
+    time_signature = as.factor(time_signature)
+  )
+
+# 2. APLICAR FAMD
+famd_result <- FAMD(data_prepared, 
+                   ncp = 10,  # Dimensiones a conservar
+                   graph = TRUE,  # Ver gráficos básicos
+                   sup.var = which(names(data_prepared) == "song_popularity"))  # Target como suplementaria
+
+# 3. ANÁLISIS DE RESULTADOS
+summary(famd_result)
+```
+
+busquem les variables mes importants
+
+```{r}
+# Identificar variables amb major contribució
+contrib_vars <- as.data.frame(famd_result$var$contrib) %>%
+  rownames_to_column("variable") %>%
+  mutate(total_contrib = rowSums(across(starts_with("Dim")))) %>%
+  arrange(desc(total_contrib))
+
+print("Top 10 variables més influents:")
+head(contrib_vars, 10)
+```
+
+dimensions a conservar
+
+```{r}
+# Scree plot amb línia de tall
+fviz_screeplot(famd_result, addlabels = TRUE) +
+  geom_hline(yintercept = 70, linetype = "dashed", color = "red") +
+  ggtitle("Variança explicada - On tallar?")
+
+# Variància acumulada
+var_explained <- famd_result$eig[,2]
+cumulative_var <- cumsum(var_explained)
+cat("Dimensions necessàries per a >70% variància:", 
+    which(cumulative_var >= 70)[1])
+```
+
+#relació amb la popularitat
+
+```{r}
+# Correlació dimensions amb popularitat
+famd_scores <- as.data.frame(famd_result$ind$coord)
+famd_scores$popularity <- tu_data$song_popularity
+
+correlations <- cor(famd_scores)[,"popularity"]
+cat("Correlació dimensions amb popularitat:\n")
+print(correlations[-ncol(famd_scores)])
+
+# Quin dimension prediu millor la popularitat?
+best_dim <- which.max(abs(correlations[-ncol(famd_scores)]))
+cat("Millor dimension per predir popularitat: Dim", best_dim)
+```
+
+la millor dimensio es la 6
+
+#grups de variables correlacionades
+
+```{r}
+# Variables que van juntes en cada dimensió
+dim1_vars <- dimdesc(famd_result, axes = 1)
+dim2_vars <- dimdesc(famd_result, axes = 2)
+
+cat("=== DIMENSIÓ 1 (Variables més importants) ===\n")
+print(head(dim1_vars$Dim.1$quanti, 5))
+print(head(dim1_vars$Dim.1$quali, 5))
+
+cat("\n=== DIMENSIÓ 2 (Variables segones més importants) ===\n") 
+print(head(dim2_vars$Dim.2$quanti, 5))
+print(head(dim2_vars$Dim.2$quali, 5))
+```
+
+#categories mes discriminnts
+
+```{r}
+# Categories que més contribueixen
+categories_contrib <- as.data.frame(famd_result$quali.var$contrib) %>%
+  rownames_to_column("category") %>%
+  arrange(desc(Dim.1))
+
+print("Categories més discriminants (Dim1):")
+head(categories_contrib, 10)
+```
+
+#estrucutura general de les dades
+
+```{r}
+# Mapa complet de variables
+fviz_famd_var(famd_result, repel = TRUE, col.var = "contrib",
+              gradient.cols = c("blue", "yellow", "red")) +
+  ggtitle("Mapa complet variables musicals")
+
+# Per veure agrupaments
+fviz_famd_var(famd_result, "quanti.var", col.var = "contrib", 
+              gradient.cols = c("blue", "yellow", "red"))
+```
+
+com que hem vist qeu les dimensions expliquen molt poca variabilitat, no ens fiarem del famd a l'hora de reduir dimesionalitat a la base de dades.
+
+
+com que time_signature i time_signature_cat son iguals, n'eliminem una per tal de fer el model mes senzill
+
+```{r}
+# Assegurar-te que no hi ha valors diferents
+conflict_check <- tu_data %>%
+  count(time_signature, time_signature_cat) %>%
+  arrange(time_signature)
+
+print(conflict_check)
+
+# Si hi ha valors diferents, decideix quina versió és més correcta
+
+# Opció correcta per al teu cas:
+data_clean <- tu_data %>%
+  select(-time_signature) %>%
+  # Assegurar que és categòrica
+  mutate(time_signature_cat = as.factor(time_signature_cat))
+
+# Verificar
+cat("Tipus de time_signature_cat després:\n")
+class(data_clean$time_signature_cat)
+
+cat("Valors únics:\n")
+unique(data_clean$time_signature_cat)
+```
+
+#feature selection
+
+```{r}
+# Assegurar que les dades estan netes i amb tipus correctes
+data_fs <- data_clean %>%
+  mutate(
+    across(where(is.character), as.factor),
+    song_popularity = as.numeric(song_popularity)
+  )
+```
+
+##primer metode, random forest importance
+
+```{r}
+library(randomForest)
+set.seed(123)
+
+# Model RF per importància
+rf_model <- randomForest(
+  song_popularity ~ ., 
+  data = data_fs, 
+  importance = TRUE,
+  ntree = 200,
+  do.trace = FALSE
+)
+
+# Extreure importàncies
+var_importance <- importance(rf_model) %>%
+  as.data.frame() %>%
+  rownames_to_column("variable") %>%
+  arrange(desc(`%IncMSE`))
+
+print("Top variables per Random Forest:")
+print(head(var_importance, 15))
+
+# Visualització
+ggplot(head(var_importance, 12), aes(x = reorder(variable, `%IncMSE`), y = `%IncMSE`)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Feature Importance - Random Forest", 
+       x = "Variables", y = "% Increase MSE") +
+  theme_minimal()
+```
+
+##segon metode: correlacions per variables numeriques
+
+```{r}
+# Correlació amb target per variables numèriques
+numeric_vars <- data_fs %>% select(where(is.numeric)) %>% names()
+correlations <- sapply(numeric_vars, function(x) {
+  cor(data_fs[[x]], data_fs$song_popularity, use = "complete.obs")
+})
+
+corr_df <- data.frame(
+  variable = names(correlations),
+  correlation = correlations
+) %>%
+  arrange(desc(abs(correlation)))
+
+print("Correlació amb song_popularity:")
+print(corr_df)
+```
+
+aquest metode nomes ens ho fa per les numeriques 
+
+##tercer metode, metode anova
+
+```{r}
+# Importància de variables categòriques
+categorical_vars <- data_fs %>% 
+  select(where(is.factor), -song_popularity) %>% 
+  names()
+
+anova_importance <- sapply(categorical_vars, function(x) {
+  anova_model <- aov(data_fs$song_popularity ~ data_fs[[x]])
+  summary(anova_model)[[1]]$"F value"[1]
+})
+
+anova_df <- data.frame(
+  variable = names(anova_importance),
+  F_value = anova_importance
+) %>%
+  arrange(desc(F_value))
+
+print("Importància variables categòriques (ANOVA):")
+print(anova_df)
+```
+
+i amb anova en canvi ens ho fa per les categoriques
+
+## quart metode, regularitzacio lasso
+
+```{r}
+library(glmnet)
+
+# Preparar dades per Lasso
+x <- model.matrix(song_popularity ~ ., data_fs)[,-1]  # eliminar intercept
+y <- data_fs$song_popularity
+
+# Lasso regression
+set.seed(123)
+cv_lasso <- cv.glmnet(x, y, alpha = 1, nfolds = 5)
+
+# Variables seleccionades
+lasso_coef <- coef(cv_lasso, s = "lambda.min")
+lasso_features <- rownames(lasso_coef)[which(lasso_coef != 0)][-1]  # eliminar intercept
+
+print("Variables seleccionades per Lasso:")
+print(lasso_features)
+```
+
+## decisio final de feaatures
+
+```{r}
+# Combinar resultats dels diferents mètodes
+feature_votes <- data.frame(
+  variable = unique(c(var_importance$variable, corr_df$variable, anova_df$variable))
+) %>%
+  left_join(var_importance %>% select(variable, rf_rank = `%IncMSE`), by = "variable") %>%
+  left_join(corr_df %>% select(variable, cor_abs = correlation) %>% 
+            mutate(cor_abs = abs(cor_abs)), by = "variable") %>%
+  left_join(anova_df %>% select(variable, anova_F = F_value), by = "variable") %>%
+  mutate(
+    rf_score = ifelse(is.na(rf_rank), 0, rf_rank),
+    cor_score = ifelse(is.na(cor_abs), 0, cor_abs),
+    anova_score = ifelse(is.na(anova_F), 0, anova_F),
+    total_score = rf_score + cor_score + anova_score,
+    lasso_selected = variable %in% lasso_features
+  ) %>%
+  arrange(desc(total_score))
+
+print("Ranking final de variables:")
+print(feature_votes)
+
+# Seleccionar top features (exemple: top 12 + les de Lasso)
+top_features <- feature_votes %>%
+  filter(total_score > quantile(total_score, 0.5) | lasso_selected) %>%
+  pull(variable)
+
+cat("Features seleccionades finals:", length(top_features), "\n")
+print(top_features)
+```
+
+## dataset final
+
+```{r}
+# Crear dataset amb features seleccionades
+final_dataset <- data_fs %>%
+  select(all_of(top_features), song_popularity)
+
+cat("Dimensions dataset final:", dim(final_dataset), "\n")
+print(names(final_dataset))
+```
+
+passem al feature engineering
+
+#feature engineering
+
+```{r}
+# 1. CONVERTIR TOTES LES CATEGÒRIQUES A FACTOR PRIMER
+final_engineered <- final_dataset %>%
+  mutate(
+    across(c(acousticness, instrumentalness, tempo, liveness), as.factor),
+    key = as.factor(key),
+    audio_mode = as.factor(audio_mode)
+  ) %>%
+  
+  # 2. FEATURE ENGINEERING - NOVES VARIABLES MUSICALS
+  mutate(
+    # A. RATIOS I INTERACCIONS CLAU
+    energy_dance_synergy = energy * danceability,
+    emotional_intensity = audio_valence * energy,
+    loudness_energy_impact = loudness * energy,
+    
+    # B. PERFILS MUSICALS COMPOSTOS
+    dance_valence_index = danceability * audio_valence,
+    speech_energy_ratio = speechiness / (energy + 0.001),
+    
+    # C. DURACIÓ EN MINUTS (MÉS INTERPRETABLE)
+    song_duration_min = song_duration_ms / 60000,
+    
+    # D. AGRUPACIONS DE CATEGORIES
+    tempo_simplified = case_when(
+      tempo %in% c("molt_ràpid", "ràpid") ~ "alta_velocitat",
+      tempo %in% c("mitjà", "moderat") ~ "velocitat_mitjana",
+      TRUE ~ "baixa_velocitat"
+    ),
+    
+    acoustic_type = case_when(
+      acousticness == "acustic" ~ "acustic",
+      acousticness == "no_acustic" ~ "no_acustic", 
+      TRUE ~ "mig_acustic"
+    ),
+    
+    # E. VARIABLES BINÀRIES IMPORTANTS
+    is_high_energy = as.numeric(energy > 0.7),
+    is_very_danceable = as.numeric(danceability > 0.7),
+    
+    # F. INTERACCIÓ ACOUSTIC-INSTRUMENTAL
+    acoustic_instrumental = paste(acousticness, instrumentalness, sep = "_")
+  ) %>%
+  
+  # 3. ELIMINAR VARIABLES REDUNDANTS
+  select(-song_duration_ms)  # Ja tenim song_duration_min
+```
+
+passem a la validacio de les noves features.
+
+```{r}
+# Comprovar correlació de noves features amb target
+new_features_correlation <- final_engineered %>%
+  select(where(is.numeric), -song_popularity) %>%
+  map_dbl(~cor(.x, final_engineered$song_popularity, use = "complete.obs"))
+
+new_features_correlation_df <- data.frame(
+  feature = names(new_features_correlation),
+  correlation = new_features_correlation
+) %>%
+  arrange(desc(abs(correlation)))
+
+print("Correlació de noves features amb popularitat:")
+print(new_features_correlation_df)
+```
+
+ara seleccionem les millors noves features
+
+```{r}
+# Variables seleccionades:
+selected_features <- c(
+  "acousticness", "instrumentalness", "loudness", "energy", "tempo",
+  "liveness", "audio_valence", "danceability", "speechiness", 
+  "song_duration_min", "key", "audio_mode", "song_popularity"
+)
+
+# Conservar només les noves features que correlacionen bé (>0.05)
+good_new_features <- new_features_correlation_df %>%
+  filter(abs(correlation) > 0.03) %>%
+  pull(feature)
+
+cat("Noves features a conservar:\n")
+print(good_new_features)
+
+# Dataset final definitiu
+final_dataset_ready <- final_engineered %>%
+  select(all_of(selected_features), all_of(good_new_features)) %>%
+  # Assegurar que totes les categòriques són factors
+  mutate(across(where(is.character), as.factor))
+
+cat("Dimensions dataset FINAL per a modelitzar:", dim(final_dataset_ready), "\n")
+```
+
+versio final del dataset
+
+```{r}
+# Última comprovació
+final_check <- list(
+  dimensions = dim(final_dataset_ready),
+  variable_types = sapply(final_dataset_ready, class),
+  missing_values = sum(is.na(final_dataset_ready)),
+  categorical_levels = sapply(final_dataset_ready %>% select(where(is.factor)), 
+                             function(x) length(levels(x)))
+)
+
+print("VERIFICACIÓ FINAL:")
+print(final_check)
+
+# Guardar dataset final (opcional)
+# write.csv(final_dataset_ready, "dataset_final_modelitzat.csv", row.names = FALSE)
+```
+
+finalment guardem el dataset final
+
+```{r}
+write.csv(final_dataset_ready, "train_pre.csv", row.names = FALSE)
+```
+
+ara s'ha de fer el mateix per el test
+
+#dataset test
+
+```{r}
+test_data <- read.csv("test_mis.csv")
+```
+
+```{r}
+# 2. VERIFICAR ESTRUCTURA
+cat("Estructura del test original:\n")
+str(test_data)
+cat("Variables del test:", names(test_data), "\n")
+
+# Important: Verificar que NO té song_popularity
+if("song_popularity" %in% names(test_data)) {
+  warning("El test té la variable target! Revisa-ho.")
+} else {
+  cat("✅ Test correcte - sense variable target\n")
+}
+```
+
+apliquem les mateixes transfromacions
+
+```{r}
+# Assegurar que tenim les mateixes variables que al train
+expected_variables <- names(final_dataset_ready)[names(final_dataset_ready) != "song_popularity"]
+
+cat("Variables esperades en test:", length(expected_variables), "\n")
+cat("Variables actuals en test:", length(names(test_data)), "\n")
+
+# Verificar coincidència
+missing_vars <- setdiff(expected_variables, names(test_data))
+extra_vars <- setdiff(names(test_data), expected_variables)
+
+if(length(missing_vars) > 0) {
+  cat("Variables que falten en test:", paste(missing_vars, collapse = ", "), "\n")
+}
+if(length(extra_vars) > 0) {
+  cat("Variables extra en test:", paste(extra_vars, collapse = ", "), "\n")
+}
+```
+
+repliquem el feature engineering
+
+```{r}
+# Aplicar les mateixes transformacions que vas fer al train
+test_processed <- test_data %>%
+  # 1. Convertir variables categòriques (mateixos noms que al train)
+  mutate(
+    across(any_of(c("acousticness", "instrumentalness", "tempo", "liveness")), as.factor),
+    across(any_of(c("key", "audio_mode")), as.factor)
+  ) %>%
+  
+  # 2. APLICAR EXACTAMENT EL MATEIX FEATURE ENGINEERING
+  mutate(
+    # Ratios i interaccions (COPIAT DEL TRAIN)
+    energy_dance_synergy = energy * danceability,
+    emotional_intensity = audio_valence * energy,
+    loudness_energy_impact = loudness * energy,
+    dance_valence_index = danceability * audio_valence,
+    speech_energy_ratio = speechiness / (energy + 0.001),
+    song_duration_min = song_duration_ms / 60000,
+    
+    # Agrupacions de categories (MATEIXES REGLES QUE TRAIN)
+    tempo_simplified = case_when(
+      tempo %in% c("molt_ràpid", "ràpid") ~ "alta_velocitat",
+      tempo %in% c("mitjà", "moderat") ~ "velocitat_mitjana",
+      TRUE ~ "baixa_velocitat"
+    ),
+    
+    acoustic_type = case_when(
+      acousticness == "acustic" ~ "acustic",
+      acousticness == "no_acustic" ~ "no_acustic", 
+      TRUE ~ "mig_acustic"
+    ),
+    
+    # Variables binàries (MATEIXOS UMBRALS QUE TRAIN)
+    is_high_energy = as.numeric(energy > 0.7),
+    is_very_danceable = as.numeric(danceability > 0.7),
+    
+    acoustic_instrumental = paste(acousticness, instrumentalness, sep = "_")
+  ) %>%
+  
+  # 3. ELIMINAR LES MATEIXES VARIABLES QUE AL TRAIN
+  select(-any_of("song_duration_ms")) %>%
+  
+  # 4. SELECCIONAR NOMÉS LES VARIABLES QUE VAS USAR AL TRAIN
+  select(any_of(expected_variables))
+```
+
+fem la verificació
+
+```{r}
+# Comprovar que tenim les mateixes variables que al train
+final_vars_train <- names(final_dataset_ready)[names(final_dataset_ready) != "song_popularity"]
+final_vars_test <- names(test_processed)
+
+cat("Variables en train:", length(final_vars_train), "\n")
+cat("Variables en test:", length(final_vars_test), "\n")
+
+# Han de ser iguals
+if(identical(sort(final_vars_train), sort(final_vars_test))) {
+  cat("✅ Test processat correctament - mateixes variables que train\n")
+} else {
+  cat("❌ Problema: variables diferents entre train i test\n")
+  cat("Diferències:", setdiff(final_vars_train, final_vars_test), "\n")
+}
+
+# Verificar tipus de variables
+var_types_check <- data.frame(
+  variable = final_vars_train,
+  type_train = sapply(final_dataset_ready[final_vars_train], class),
+  type_test = sapply(test_processed[final_vars_train], class)
+)
+
+print("Comparació de tipus de variables:")
+print(var_types_check)
+```
+
+guardem el test preprocessat
+
+```{r}
+write.csv(test_processed, "test_pre.csv", row.names = FALSE)
+```
+
+
+
+
+# CLASE
+hem de fer una selecció de les variables predictores per la fase de modelitzacio del model 
+
+que es el mes importaant:
+- variables predictores redundants poden distreure o enganyar els algoritmes d'aprenentatge, que suposaria un menor rendiment, en exactitud, precisió i en temps de cocmputació
+- la inclusió de varibles irrellevants augmenta el cost computacional i en dificulta la interpretació
+
+ens centrarem en els metodes de selecció que tenen en compte les variables objectiu(supervisats)
+1. metoes tipo filter
+2. metodes tipo envoltura
+3. metodes tipo intrinsecs
+
+# preselecció de variables 
+
+variança nula:
+
+les variables d'aquest tipus l0unic que faran serà ficar soroll al model, i el millor serà eliminarles 
+
+```{r}
+library(caret)
+library(tidyverse)
+
+numeric_cols <- sapply(train, is.numeric)
+train_num <- train[, numeric_cols]
+
+varianza <- nearZeroVar(train_num, saveMetrics = T)
+head(varianza, 11)
+```
+
+veiem que la variable time_signature te variança quasi nula , per tant no l'hauriem de incloure en el model.
+
+
+correlacion entre variables 
+
+```{r}
+train_cor <- cor(train_num[, 1:10])
+(alta_corr <- findCorrelation(train_cor, cutoff = .9))
+```
+
+
+```{r}
+library("corrplot")
+
+matriz_corr <- cor(train_num[, 1:11])
+corrplot(matriz_corr, method = "circle")
+```
+
+
+veiem molt correlacionades time_signature i time_siginature_cat, fet que no ens sorpren ja que son la mateixa variable
+
+tambe podem observar que energy i loudness tambe estan bastant correlacionades
