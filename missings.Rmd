@@ -410,6 +410,6 @@ Les dues últimes variables no se si acaba de ser del tot cohorent.
 Fem export de les dades finals
 ```{r}
 write.csv(data_final, "train_mis.csv", row.names = FALSE)
-write.csv(data_final, "test_mis.csv", row.names = FALSE)
+write.csv(data_final_test, "test_mis.csv", row.names = FALSE)
 ```
 
