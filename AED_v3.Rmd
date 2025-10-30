@@ -1,0 +1,305 @@
+---
+title: "AED"
+date: "2025-10-07"
+output: html_document
+---
+
+```{r, warning=FALSE}
+#canviar directori on es tenen les dades
+library(readr)
+train <- read.csv("train.csv", row.names=1)
+test <- read.csv("test.csv", row.names=1)
+```
+
+#Descripció del problema
+
+*danceability*: mesura fins a quin punt la cançó és adequada per ballar.
+*energy*: intensitat i nivell d’activitat de la cançó.
+*acousticness*: grau en què la pista és acústica.
+*instrumentalness*: probabilitat que la cançó no contingui veus.
+*liveness*: probabilitat que la pista hagi estat gravada en directe.
+*audio_valence*: positivitat musical de la pista (feliç ↔ trist).
+*tempo*: velocitat de la cançó (BPM).
+*loudness*: volum mitjà en decibels.
+*speechiness*: presència de paraules parlades.
+*duration_ms*: durada total en mil·lisegons.
+*time_signature*: nombre de notes que conté cada compàs.
+*key*: tonalitat.
+*audio_mode*: mode musical.
+*song_popularity*: variable objectiu. Puntuació contínua que reflecteix fins a quin punt és popular la cançó.
+
+```{r, echo=FALSE}
+#transformem les variables *key*, *audio_mode*, *tempo*, *instrumentalness*, *liveness* i *acousticness* a categòriques
+#es transformen a train i a test
+#creem una nova variable *time_signature_cat* que serà categòrica
+
+train$key <- as.factor(train$key)
+train$audio_mode <- as.factor(train$audio_mode)
+test$key <- as.factor(test$key)
+test$audio_mode <- as.factor(test$audio_mode)
+
+#he fet aixi amb probabilitats però potser hauríem de posar arbitràriament els límits de les categories
+
+train$tempo <- cut(train$tempo,
+                    breaks = quantile(train$tempo, probs = c(0, 1/3, 2/3, 1), na.rm = TRUE),
+                    include.lowest = TRUE,
+                    labels = c("lent", "mitjà", "ràpid"))
+
+test$tempo <- cut(test$tempo,
+                    breaks = quantile(test$tempo, probs = c(0, 1/3, 2/3, 1), na.rm = TRUE),
+                    include.lowest = TRUE,
+                    labels = c("lent", "mitjà", "ràpid"))
+
+
+
+train$instrumentalness <- cut(
+  train$instrumentalness,
+  breaks = c(0, 0.33, 0.66, 1),
+  labels = c("sense_veu", "poca_veu", "molta_veu"),
+  include.lowest = TRUE
+)
+
+test$instrumentalness <- cut(
+  test$instrumentalness,
+  breaks = c(0, 0.33, 0.66, 1),
+  labels = c("sense_veu", "poca_veu", "molta_veu"),
+  include.lowest = TRUE
+)
+
+
+
+train$liveness <- cut(train$liveness,
+                    breaks = quantile(train$liveness, probs = c(0, 1/3, 2/3, 1), na.rm = TRUE),
+                    include.lowest = TRUE,
+                    labels = c("gravada", "mig", "en_viu"))
+
+test$liveness <- cut(test$liveness,
+                    breaks = quantile(test$liveness, probs = c(0, 1/3, 2/3, 1), na.rm = TRUE),
+                    include.lowest = TRUE,
+                    labels = c("gravada", "mig_en_viu", "en_viu"))
+
+
+
+train$acousticness <- cut(train$acousticness,
+                    breaks = quantile(train$acousticness, probs = c(0, 1/3, 2/3, 1), na.rm = TRUE),
+                    include.lowest = TRUE,
+                    labels = c("no_acustic", "mig_acustic", "acustic"))
+
+test$acousticness <- cut(test$acousticness,
+                    breaks = quantile(test$acousticness, probs = c(0, 1/3, 2/3, 1), na.rm = TRUE),
+                    include.lowest = TRUE,
+                    labels = c("no_acustic", "mig_acustic", "acustic"))
+
+
+
+train$time_signature_cat <- as.factor(train$time_signature)
+test$time_signature_cat <- as.factor(test$time_signature)
+
+
+
+#fem la descripció per comprovar que surten com a variables categòriques
+classes <- sapply(train, class)
+varCat <- names(classes)[which(classes %in% c("character", "factor"))]
+
+classes <- sapply(train, class)
+varNum <- names(classes)[which(classes %in% c("numeric", "integer"))]
+
+#creem aquestes bases de dades amb els NA's omitits per poder fer els descriptius
+
+train_senseNA <- na.omit(train)
+test_senseNA <- na.omit(test)
+
+```
+
+#Anàlisi exploratori univariant
+##Numèric
+###Descriptiu
+
+```{r, echo=FALSE}
+library(psych)
+psych::describe(train_senseNA[, varNum])
+```
+
+###Gràfics
+
+```{r, echo=FALSE}
+par(mfrow = c(2, 4))  
+for (var in varNum) {
+  hist(train_senseNA[, var], main = paste0("Histograma variable ", var))
+  boxplot(train_senseNA[, var], main = paste0("Boxplot variable ", var))
+}
+```
+
+##Categòriques
+
+```{r}
+for (var in varCat) {
+  tablaAbs <- data.frame(table(train_senseNA[, var]))
+  tablaFreq <- data.frame(table(train_senseNA[, var])/sum(table(train_senseNA[, var])))
+  m <- match(tablaAbs$Var1, tablaFreq$Var1)
+  tablaAbs[, "FreqRel"] <- tablaFreq[m, "Freq"]
+  colnames(tablaAbs) <- c("Categoria", "FreqAbs", "FreqRel")
+  
+  cat("===============", var, "===================================\n")
+  print(tablaAbs)
+  cat("==================================================\n")
+}
+```
+
+###Gràfics
+
+```{r}
+par(mfrow = c(2, 3))  
+for (var in varCat) {
+  barplot(
+    table(train_senseNA[, var]),
+    main = var,             
+    las = 2                
+  )
+}
+par(mfrow = c(1, 1)) 
+```
+
+#Anàlisi exploratori bivariant
+##Numèric vs numèric
+###Descriptiu
+
+```{r}
+cor(train_senseNA[, varNum])
+```
+
+###Descriptiu
+
+```{r}
+library(ggcorrplot)
+corr <- round(cor(train_senseNA[, varNum]), 1)
+ggcorrplot(corr, lab = T)
+```
+
+##Numèric vs categòric
+
+```{r}
+for (varN in varNum) {
+  for (varC in varCat) {
+   print(psych::describeBy(train_senseNA[, varN], group = train_senseNA[, varC])) 
+  }
+}
+```
+
+###Gràfics
+
+```{r}
+library(ggplot2)
+library(gridExtra)
+
+plots <- list()
+i <- 1
+
+for (varC in varCat) {
+  for (varN in varNum) {
+    
+    grafico <- ggplot(train_senseNA, aes(x = .data[[varN]], fill = .data[[varC]])) + 
+      geom_histogram(colour = "black",
+                     lwd = 0.75,
+                     linetype = 1,
+                     position = "identity",
+                     alpha = 0.5) +
+      labs(title = paste("Histograma de", varN, "por", varC),
+           x = varN, y = "Frecuencia", fill = varC) +
+      theme_minimal()
+    
+    plots[[i]] <- grafico
+    i <- i + 1
+  }
+}
+
+# Mostrar tots els gràfics en un grid 
+gridExtra::marrangeGrob(grobs = plots, ncol = 1, nrow = 1)
+```
+
+
+##Categòric vs categòric
+###Descriptiu
+
+```{r}
+for (varc1 in varCat) {
+  for (varc2 in varCat) {
+    if (varc1 != varc2) {
+      prop_table <- prop.table(table(train_senseNA[, varc1], train_senseNA[, varc2]))
+      cat("=============", varc1, " vs. ", varc2, "=========================\n")
+      print(prop_table)
+    }
+  }
+}
+```
+
+###Gràfics
+
+```{r}
+par(mfrow = c(3, 3))  
+for (varc1 in varCat) {
+  for (varc2 in varCat) {
+    if (varc1 != varc2) {
+      prop_table <- prop.table(table(train_senseNA[, varc1], train_senseNA[, varc2]))
+      barplot(prop_table, beside = TRUE, main = paste(varc1, "vs", varc2))
+    }
+  }
+}
+```
+
+#Automatic Descriptive Analysis
+##Skim
+
+```{r}
+library(skimr)
+library(tidyverse)
+
+#Podem visualitzar un descriptiu de les dades 
+#Aquí utilitzem la bd original (sense haver omès els NA's)
+skim(train)
+```
+
+##Vis
+
+```{r}
+library(visdat)
+
+## Busquem per a variables numèriques o categòriques si hi ha NA's
+vis_dat(train)
+```
+
+```{r}
+## Visualitzem percentatges de NA's en les variables
+vis_miss(train)
+```
+
+```{r}
+## Generem la matriu de correlacions
+train %>% select(where(is.numeric)) %>% 
+  vis_cor()
+```
+
+
+```{r}
+#fem un export després del AED
+train_AED <- train
+test_AED <- test
+
+write_csv(train_AED, "train_AED.csv")
+write_csv(test_AED, "test_AED.csv")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
