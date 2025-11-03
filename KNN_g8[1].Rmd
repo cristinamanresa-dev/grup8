@@ -1,0 +1,100 @@
+---
+title: "KNN"
+author: "Gemma Galobart"
+date: "2025-10-30"
+output: html_document
+---
+
+```{r}
+library(caret)
+#install.packages("VIM")
+library(VIM)
+install.packages("kknn")
+library(kknn)
+```
+
+
+```{r}
+# Cargamos la base de datos necesarios
+
+train <- read.csv(file="train_pre.csv",header=TRUE, sep=",")
+# variable resposta
+y <- train$song_popularity
+dataTest <- read.csv(file="test_pre.csv",header=TRUE, sep=",")
+```
+
+```{r}
+aux <- dataTrain
+auxTest <- dataTest
+
+formula_knn <- song_popularity ~ .
+
+set.seed(123)
+result <- kknn(
+formula = formula_knn,
+train = aux,
+test = auxTest,
+k = 5,
+)
+
+auxTest$pred_songpopularity <- fitted(result)
+head(auxTest$pred_songpopularity)
+```
+
+Versio - Cristina
+```{r}
+## PACKAGES
+install.packages("caret")
+library(caret)
+install.packages("class")
+library(class)
+
+
+## X i y
+X <- train[, !names(train) %in% c("song_popularity")]
+y <- train$song_popularity
+
+## dummies per categòriques
+install.packages("fastDummies")
+library(fastDummies)
+
+X_dummies <- dummy_cols(X, remove_first_dummy = FALSE, remove_selected_columns = TRUE)
+
+
+## escalar numeric
+X_scaled <- scale(X_dummies)
+
+## split train / test
+set.seed(123)
+trainIndex <- createDataPartition(y, p = 0.7, list = FALSE)
+X_train <- X_scaled[trainIndex, ]
+X_test  <- X_scaled[-trainIndex, ]
+y_train <- y[trainIndex]
+y_test  <- y[-trainIndex]
+
+## KNN REGRESSIÓ -> fem k = 5 de base
+k <- 5
+pred <- knn(train = X_train, test = X_test, cl = y_train, k = k)
+
+## avaluació regressió
+RMSE <- sqrt(mean((as.numeric(pred) - y_test)^2))
+MAE <- mean(abs(as.numeric(pred) - y_test))
+RMSE
+MAE
+MAPE <- mean(abs((as.numeric(pred) - y_test) / y_test)) * 100
+MAPE
+
+## opcional buscar k òptim
+results <- data.frame(k = integer(), RMSE = double())
+
+for (k in 1:20) {
+  pred_k <- knn(train = X_train, test = X_test, cl = y_train, k = k)
+  rmse_k <- sqrt(mean((as.numeric(pred_k) - y_test)^2))
+  results <- rbind(results, data.frame(k = k, RMSE = rmse_k))
+}
+
+print(results)
+plot(results$k, results$RMSE, type="b")
+
+```
+
