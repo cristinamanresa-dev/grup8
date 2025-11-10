@@ -1,0 +1,430 @@
+---
+title: "modelitzacio"
+author: "Laia Ribes"
+date: "2025-11-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+# Cargar librerías necesarias
+library(tidyverse)
+library(caret)
+library(randomForest)
+library(xgboost)
+library(glmnet)
+```
+
+
+```{r}
+# Cargar los datos de entrenamiento
+train_data <- read.csv("train_pre.csv")
+
+# Exploración inicial de los datos
+str(train_data)
+summary(train_data)
+
+# Verificar valores missing
+sum(is.na(train_data))
+```
+
+ Convertir variables categóricas a factores si es necesario
+ Basado en los datos, parece que algunas variables están en catalán
+ Vamos a identificar y convertir las variables categóricas
+
+```{r}
+# Identificar variables categóricas
+categorical_vars <- c("acousticness", "instrumentalness", "tempo", "liveness", "audio_mode", "key")
+
+# Convertir a factores
+for(var in categorical_vars) {
+  if(var %in% names(train_data)) {
+    train_data[[var]] <- as.factor(train_data[[var]])
+  }
+}
+```
+
+
+```{r}
+# Verificar la variable objetivo
+table(train_data$song_popularity)
+hist(train_data$song_popularity, main = "Distribución de Song Popularity")
+
+# Dividir los datos de entrenamiento para validación (80% train, 20% validation)
+set.seed(123)
+train_index <- createDataPartition(train_data$song_popularity, p = 0.8, list = FALSE)
+train_set <- train_data[train_index, ]
+validation_set <- train_data[-train_index, ]
+```
+
+# Opción 1: Random Forest
+
+```{r}
+set.seed(123)
+rf_model <- randomForest(
+  song_popularity ~ .,
+  data = train_set,
+  ntree = 100,
+  importance = TRUE
+)
+
+# Predecir en el validation set
+rf_predictions <- predict(rf_model, validation_set)
+
+# Evaluar el modelo RF
+rf_rmse <- sqrt(mean((rf_predictions - validation_set$song_popularity)^2))
+rf_mae <- mean(abs(rf_predictions - validation_set$song_popularity))
+rf_r2 <- cor(rf_predictions, validation_set$song_popularity)^2
+
+cat("Random Forest Performance:\n")
+cat("RMSE:", round(rf_rmse, 3), "\n")
+cat("MAE:", round(rf_mae, 3), "\n")
+cat("R²:", round(rf_r2, 3), "\n")
+
+# Importancia de variables
+varImpPlot(rf_model, main = "Importancia de Variables - Random Forest")
+```
+
+# Opción 2: XGBoost (preparar datos)
+
+```{r}
+# Convertir datos para XGBoost
+train_matrix <- model.matrix(song_popularity ~ . - 1, data = train_set)
+validation_matrix <- model.matrix(song_popularity ~ . - 1, data = validation_set)
+
+xgb_train <- xgb.DMatrix(data = train_matrix, label = train_set$song_popularity)
+xgb_validation <- xgb.DMatrix(data = validation_matrix, label = validation_set$song_popularity)
+
+# Entrenar modelo XGBoost
+set.seed(123)
+xgb_model <- xgb.train(
+  data = xgb_train,
+  nrounds = 100,
+  max_depth = 6,
+  eta = 0.1,
+  objective = "reg:squarederror",
+  eval_metric = "rmse",
+  verbose = 0
+)
+
+# Predecir con XGBoost
+xgb_predictions <- predict(xgb_model, xgb_validation)
+
+# Evaluar XGBoost
+xgb_rmse <- sqrt(mean((xgb_predictions - validation_set$song_popularity)^2))
+xgb_mae <- mean(abs(xgb_predictions - validation_set$song_popularity))
+xgb_r2 <- cor(xgb_predictions, validation_set$song_popularity)^2
+
+cat("\nXGBoost Performance:\n")
+cat("RMSE:", round(xgb_rmse, 3), "\n")
+cat("MAE:", round(xgb_mae, 3), "\n")
+cat("R²:", round(xgb_r2, 3), "\n")
+
+# Comparar modelos
+performance_comparison <- data.frame(
+  Modelo = c("Random Forest", "XGBoost"),
+  RMSE = c(rf_rmse, xgb_rmse),
+  MAE = c(rf_mae, xgb_mae),
+  R2 = c(rf_r2, xgb_r2)
+)
+
+print(performance_comparison)
+
+# Elegir el mejor modelo basado en RMSE
+if(rf_rmse <= xgb_rmse) {
+  final_model <- rf_model
+  model_type <- "random_forest"
+  cat("\nModelo seleccionado: Random Forest\n")
+} else {
+  final_model <- xgb_model
+  model_type <- "xgboost"
+  cat("\nModelo seleccionado: XGBoost\n")
+}
+
+# Entrenar el modelo final con todos los datos de entrenamiento
+if(model_type == "random_forest") {
+  # Random Forest con todos los datos
+  final_model_complete <- randomForest(
+    song_popularity ~ .,
+    data = train_data,
+    ntree = 100,
+    importance = TRUE
+  )
+} else {
+  # XGBoost con todos los datos
+  complete_matrix <- model.matrix(song_popularity ~ . - 1, data = train_data)
+  xgb_complete <- xgb.DMatrix(data = complete_matrix, label = train_data$song_popularity)
+  
+  final_model_complete <- xgb.train(
+    data = xgb_complete,
+    nrounds = 100,
+    max_depth = 6,
+    eta = 0.1,
+    objective = "reg:squarederror",
+    eval_metric = "rmse",
+    verbose = 0
+  )
+}
+```
+
+# FUNCIÓN PARA PREDECIR EN TEST SET
+
+```{r}
+
+predict_test_set <- function(model, test_data, model_type = "random_forest") {
+  
+  # Asegurarse de que test_data tiene las mismas columnas que train_data
+  expected_columns <- names(train_data)
+  missing_columns <- setdiff(expected_columns, names(test_data))
+  
+  if(length(missing_columns) > 0) {
+    warning("Faltan columnas en test data: ", paste(missing_columns, collapse = ", "))
+  }
+  
+  # Preprocesar test_data de la misma manera
+  for(var in categorical_vars) {
+    if(var %in% names(test_data)) {
+      test_data[[var]] <- as.factor(test_data[[var]])
+    }
+  }
+  
+  if(model_type == "random_forest") {
+    predictions <- predict(model, test_data)
+  } else {
+    # Para XGBoost
+    test_matrix <- model.matrix(~ . - 1, data = test_data)
+    
+    # Asegurarse de que test_matrix tiene las mismas columnas que el entrenamiento
+    train_matrix_cols <- colnames(complete_matrix)
+    test_matrix_cols <- colnames(test_matrix)
+    
+    # Agregar columnas faltantes con 0
+    missing_cols <- setdiff(train_matrix_cols, test_matrix_cols)
+    if(length(missing_cols) > 0) {
+      for(col in missing_cols) {
+        test_matrix <- cbind(test_matrix, 0)
+      }
+      colnames(test_matrix) <- c(test_matrix_cols, missing_cols)
+    }
+    
+    # Reordenar columnas para que coincidan
+    test_matrix <- test_matrix[, train_matrix_cols]
+    
+    test_dmatrix <- xgb.DMatrix(data = test_matrix)
+    predictions <- predict(model, test_dmatrix)
+  }
+  
+  return(predictions)
+}
+
+# Visualización de resultados de validación
+par(mfrow = c(1, 2))
+
+# Plot predicciones vs reales para Random Forest
+plot(validation_set$song_popularity, rf_predictions, 
+     main = paste("Random Forest\nR² =", round(rf_r2, 3)),
+     xlab = "Valor Real", ylab = "Predicción")
+abline(0, 1, col = "red")
+
+# Plot predicciones vs reales para XGBoost
+plot(validation_set$song_popularity, xgb_predictions, 
+     main = paste("XGBoost\nR² =", round(xgb_r2, 3)),
+     xlab = "Valor Real", ylab = "Predicción")
+abline(0, 1, col = "red")
+
+par(mfrow = c(1, 1))
+
+# Resumen final
+cat("\n=== RESUMEN FINAL ===\n")
+cat("Mejor modelo:", ifelse(rf_rmse <= xgb_rmse, "Random Forest", "XGBoost"), "\n")
+cat("RMSE del mejor modelo:", round(min(rf_rmse, xgb_rmse), 3), "\n")
+cat("MAE del mejor modelo:", round(min(rf_mae, xgb_mae), 3), "\n")
+cat("R² del mejor modelo:", round(max(rf_r2, xgb_r2), 3), "\n")
+```
+
+```{r}
+# Cargar y predecir en test set (asumiendo que tienes un archivo test_pre.csv)
+test_data <- read.csv("test_pre.csv")
+
+# Aplicar el modelo al test set
+test_predictions <- predict_test_set(final_model_complete, test_data, model_type)
+
+# Crear dataframe con predicciones
+results <- data.frame(
+ row_id = 1:nrow(test_data),
+ predicted_song_popularity = test_predictions
+)
+
+# Guardar resultados
+write.csv(results, "predictions.csv", row.names = FALSE)
+```
+
+#SEGONA VERSIO
+
+```{r}
+# Cargar librerías necesarias
+library(tidyverse)
+library(caret)
+library(randomForest)
+library(xgboost)
+library(glmnet)
+
+# Cargar los datos de entrenamiento
+train_data <- read.csv("train_pre.csv")
+
+# Exploración inicial de los datos
+str(train_data)
+summary(train_data)
+
+# Verificar valores missing
+sum(is.na(train_data))
+
+# Identificar y convertir variables categóricas
+categorical_vars <- c("acousticness", "instrumentalness", "tempo", "liveness", "audio_mode", "key")
+
+# Convertir a factores y manejar niveles
+for(var in categorical_vars) {
+  if(var %in% names(train_data)) {
+    train_data[[var]] <- as.factor(train_data[[var]])
+  }
+}
+
+# Dividir los datos de entrenamiento para validación
+set.seed(123)
+train_index <- createDataPartition(train_data$song_popularity, p = 0.8, list = FALSE)
+train_set <- train_data[train_index, ]
+validation_set <- train_data[-train_index, ]
+
+# Entrenar modelo Random Forest
+set.seed(123)
+rf_model <- randomForest(
+  song_popularity ~ .,
+  data = train_set,
+  ntree = 100,
+  importance = TRUE
+)
+
+# Predecir en validation set
+rf_predictions <- predict(rf_model, validation_set)
+
+# Evaluar el modelo
+rf_rmse <- sqrt(mean((rf_predictions - validation_set$song_popularity)^2))
+rf_mae <- mean(abs(rf_predictions - validation_set$song_popularity))
+rf_r2 <- cor(rf_predictions, validation_set$song_popularity)^2
+
+cat("Random Forest Performance:\n")
+cat("RMSE:", round(rf_rmse, 3), "\n")
+cat("MAE:", round(rf_mae, 3), "\n")
+cat("R²:", round(rf_r2, 3), "\n")
+
+# Entrenar modelo final con todos los datos de entrenamiento
+final_model <- randomForest(
+  song_popularity ~ .,
+  data = train_data,
+  ntree = 100,
+  importance = TRUE
+)
+
+# FUNCIÓN CORREGIDA PARA PREDECIR EN TEST SET
+predict_test_set <- function(model, test_data, train_data) {
+  
+  # Guardar los nombres de las filas si es necesario
+  row_names <- rownames(test_data)
+  
+  # Crear una copia del test_data para no modificar el original
+  test_processed <- test_data
+  
+  # 1. Manejar la columna song_popularity faltante
+  # Si falta song_popularity, agregarla temporalmente con NA
+  if(!"song_popularity" %in% names(test_processed)) {
+    test_processed$song_popularity <- NA
+  }
+  
+  # 2. Asegurarse de que todas las columnas del train estén en test
+  train_columns <- names(train_data)
+  missing_columns <- setdiff(train_columns, names(test_processed))
+  
+  # Agregar columnas faltantes con valores por defecto
+  for(col in missing_columns) {
+    if(col == "song_popularity") {
+      test_processed[[col]] <- NA
+    } else if(is.numeric(train_data[[col]])) {
+      test_processed[[col]] <- 0  # o median(train_data[[col]])
+    } else {
+      test_processed[[col]] <- levels(train_data[[col]])[1]  # primer nivel del factor
+    }
+  }
+  
+  # 3. Reordenar columnas para que coincidan con el entrenamiento
+  test_processed <- test_processed[, train_columns]
+  
+  # 4. Preprocesar variables categóricas y manejar niveles de factores
+  categorical_vars <- c("acousticness", "instrumentalness", "tempo", "liveness", "audio_mode", "key")
+  
+  for(var in categorical_vars) {
+    if(var %in% names(test_processed)) {
+      # Convertir a factor con los mismos niveles que el training
+      test_processed[[var]] <- factor(test_processed[[var]], 
+                                     levels = levels(train_data[[var]]))
+      
+      # Manejar niveles nuevos: asignar el nivel más común del training
+      new_levels <- setdiff(test_processed[[var]], levels(train_data[[var]]))
+      if(length(new_levels) > 0) {
+        cat("Manejando nuevos niveles en", var, ":", paste(new_levels, collapse = ", "), "\n")
+        most_common_level <- names(sort(table(train_data[[var]]), decreasing = TRUE))[1]
+        test_processed[[var]] <- as.character(test_processed[[var]])
+        test_processed[[var]][test_processed[[var]] %in% new_levels] <- most_common_level
+        test_processed[[var]] <- factor(test_processed[[var]], levels = levels(train_data[[var]]))
+      }
+    }
+  }
+  
+  # 5. Hacer predicciones
+  predictions <- predict(model, test_processed)
+  
+  return(predictions)
+}
+
+# Cargar el test set (reemplaza con tu archivo real)
+test_data <- read.csv("test_pre.csv")  # Asegúrate de que este archivo existe
+
+# Verificar estructura del test set
+cat("\nEstructura del test set:\n")
+str(test_data)
+cat("\nColumnas en test set:", paste(names(test_data), collapse = ", "), "\n")
+
+# Aplicar el modelo al test set CORREGIDO
+test_predictions <- predict_test_set(final_model, test_data, train_data)
+
+# Crear dataframe con resultados
+results <- data.frame(
+  row_id = 1:nrow(test_data),
+  predicted_song_popularity = round(test_predictions, 1)  # Redondear si es necesario
+)
+
+# Mostrar resumen de las predicciones
+cat("\nResumen de predicciones:\n")
+summary(results$predicted_song_popularity)
+
+names(results)[names(results) == "row_id"] <- "ID"
+names(results)[names(results) == "predicted_song_popularity"] <- "song_popularity"
+# Guardar resultados
+write.csv(results, "predictions.csv", row.names = FALSE)
+cat("\nPredicciones guardadas en 'predictions.csv'\n")
+
+# Visualizar distribución de predicciones
+hist(results$predicted_song_popularity, 
+     main = "Distribución de Predicciones de Song Popularity",
+     xlab = "Popularidad Predicha",
+     col = "lightblue",
+     border = "black")
+
+# Si quieres ver las primeras predicciones
+cat("\nPrimeras 10 predicciones:\n")
+print(head(results, 10))
+```
+
+
