@@ -1,0 +1,34 @@
+---
+title: "modelitzacio"
+author: "Cristina Manresa"
+date: "2025-11-10"
+output: html_document
+---
+
+```{r}
+library(randomForest)
+library(xgboost)
+library(readr)
+
+# train_data ja preprocessada
+# test_data ja preprocessada amb mateixes columnes i factors correctes
+train_data <- read_csv("train_pre.csv")
+test_data <- read_csv("test_pre.csv")
+
+# Entrenament
+set.seed(123)
+rf_model <- randomForest(song_popularity ~ ., data=train_data, ntree=100)
+
+# Predicció sobre test
+pred <- predict(rf_model, test_data)
+
+# Integerització i clamp
+pred <- as.integer(pmin(pmax(round(pred), 0), 100))
+
+# Guardar resultats
+results <- data.frame(ID = seq_len(nrow(test_data)), song_popularity = pred)
+write.csv(results, "predictions.csv", row.names=FALSE)
+
+```
+
+
