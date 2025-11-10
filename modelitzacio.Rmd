@@ -13,6 +13,7 @@ knitr::opts_chunk$set(echo = TRUE)
 # Cargar librerías necesarias
 library(tidyverse)
 library(caret)
+#install.packages("randomForest")
 library(randomForest)
 library(xgboost)
 library(glmnet)
@@ -30,11 +31,7 @@ summary(train_data)
 # Verificar valores missing
 sum(is.na(train_data))
 ```
-
- Convertir variables categóricas a factores si es necesario
- Basado en los datos, parece que algunas variables están en catalán
- Vamos a identificar y convertir las variables categóricas
-
+Convertir variables
 ```{r}
 # Identificar variables categóricas
 categorical_vars <- c("acousticness", "instrumentalness", "tempo", "liveness", "audio_mode", "key")
@@ -397,13 +394,17 @@ str(test_data)
 cat("\nColumnas en test set:", paste(names(test_data), collapse = ", "), "\n")
 
 # Aplicar el modelo al test set CORREGIDO
-test_predictions <- predict_test_set(final_model, test_data, train_data)
+test_predictions <- round(test_predictions) 
+test_predictions[test_predictions < 0] <- 0
+test_predictions[test_predictions > 100] <- 100
+
 
 # Crear dataframe con resultados
 results <- data.frame(
-  row_id = 1:nrow(test_data),
-  predicted_song_popularity = round(test_predictions, 1)  # Redondear si es necesario
+  ID = 1:nrow(test_data),
+  song_popularity = as.integer(test_predictions)
 )
+
 
 # Mostrar resumen de las predicciones
 cat("\nResumen de predicciones:\n")
