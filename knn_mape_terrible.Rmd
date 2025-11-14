@@ -1,0 +1,77 @@
+```{r}
+#importar dades
+library(readr)
+dades_train <- read_csv("C:/Users/guill/Downloads/train_pre (1).csv", 
+    col_types = cols(ID = col_skip()))
+dades <- dades_train
+
+#convertir dades categoriques a numeriques
+dades$acousticness <- as.numeric(factor(dades$acousticness, 
+                                      levels = c("acustic", "mig_acustic", "no_acustic")))
+dades$instrumentalness <- as.numeric(factor(dades$instrumentalness, 
+                                          levels = c("molta_veu", "poca_veu", "sense_veu")))
+dades$tempo <- as.numeric(factor(dades$tempo, 
+                                levels = c("lent", "mitjà", "ràpid")))
+dades$liveness <- as.numeric(factor(dades$liveness, 
+                                   levels = c("gravada", "mig", "en_viu")))
+
+#filtre per evitar que hi hagi 0. preguntar al sergi/dante si esta be. conservo un 87,9% de les dades
+dades <- dades[dades$song_popularity > 15 & dades$song_popularity < 85, ]
+
+#particio  training/test
+set.seed(1)
+inTraining <- createDataPartition(dades$song_popularity, p = .80, list = FALSE)
+training <- dades[inTraining,]
+testing  <- dades[-inTraining,]
+
+#crossvalidation (nse si ho fa)
+set.seed(1)
+ctrl <- trainControl(
+  method = "cv",
+  number = 10)
+
+#busca k-optima (nse si ho fa)
+
+set.seed(1)
+tuneGrid <- expand.grid(
+  k = seq(5, 50, by = 2)
+)
+
+#executa model
+
+model5 <- train(
+  song_popularity ~ .,
+  data = training,
+  method = 'knn',
+  preProcess = c("center", "scale"),
+  trControl = ctrl,
+  tuneGrid = tuneGrid
+)
+model5
+plot(model5)
+model5$bestTune
+```
+
+```{r}
+#prediccions
+prediccions <- predict(model5, newdata = testing)
+valors_reals <- testing$song_popularity
+
+#es força a ser numeric (en teoria ja ho hauria de ser pero nse)
+prediccions_numeric <- as.numeric(prediccions)
+
+#calcula les metriques
+calcul_metriques <- function(prediccions, reals) {
+  rmse <- sqrt(mean((reals - prediccions)^2))
+  mae <- mean(abs(reals - prediccions))
+  mape <- mean(abs((reals - prediccions) / reals)) * 100
+  
+  return(data.frame(
+    RMSE = rmse,
+    MAE = mae,
+    MAPE = mape
+  ))
+}
+
+calcul_metriques(prediccions_numeric, valors_reals)
+```
