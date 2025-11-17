@@ -1,0 +1,120 @@
+```{r}
+#importar dades
+library(readr)
+library(caret)
+dades <- read_csv("C:/Users/guill/Downloads/train_pre (1).csv", 
+    col_types = cols(ID = col_skip()))
+
+#convertir dades categoriques a numeriques
+dades$acousticness <- as.numeric(factor(dades$acousticness, 
+                                      levels = c("acustic", "mig_acustic", "no_acustic")))
+dades$instrumentalness <- as.numeric(factor(dades$instrumentalness, 
+                                          levels = c("molta_veu", "poca_veu", "sense_veu")))
+dades$tempo <- as.numeric(factor(dades$tempo, 
+                                levels = c("lent", "mitjà", "ràpid")))
+dades$liveness <- as.numeric(factor(dades$liveness, 
+                                   levels = c("gravada", "mig", "en_viu")))
+
+dades$song_popularity <- log(dades$song_popularity + 1)
+
+#particio  training/test
+set.seed(1)
+inTraining <- createDataPartition(dades$song_popularity, p = .80, list = FALSE)
+training <- dades[inTraining,]
+testing  <- dades[-inTraining,]
+
+#crossvalidation (nse si ho fa)
+set.seed(1)
+ctrl <- trainControl(
+  method = "cv",
+  number = 10)
+
+#busca k-optima (nse si ho fa)
+
+tuneGrid <- expand.grid(
+  k = seq(5, 50, by = 2)
+)
+
+#executa model
+
+model5 <- train(
+  song_popularity ~ .,
+  data = training,
+  method = 'knn',
+  preProcess = c("center", "scale"),
+  trControl = ctrl,
+  tuneGrid = tuneGrid
+)
+model5
+plot(model5)
+model5$bestTune
+```
+
+```{r}
+#prediccions
+prediccions <- predict(model5, newdata = testing)
+valors_reals <- testing$song_popularity
+
+#es força a ser numeric (en teoria ja ho hauria de ser pero nse)
+prediccions_numeric <- as.numeric(prediccions)
+
+#calcula les metriques
+calcul_metriques <- function(prediccions, reals) {
+  # Assegurar que són numèrics
+  prediccions_numeric <- as.numeric(prediccions)
+  reals_numeric <- as.numeric(reals)
+  
+  rmse <- sqrt(mean((reals_numeric - prediccions_numeric)^2))
+  mae <- mean(abs(reals_numeric - prediccions_numeric))
+  
+  # MAPE amb protecció contra divisió per zero
+  non_zero_indices <- reals_numeric != 0
+  if(sum(non_zero_indices) > 0) {
+    mape <- mean(abs((reals_numeric[non_zero_indices] - prediccions_numeric[non_zero_indices]) / 
+                       reals_numeric[non_zero_indices])) * 100
+  } else {
+    mape <- NA
+  }
+  
+  # R-squared
+  r_squared <- 1 - sum((reals_numeric - prediccions_numeric)^2) / 
+    sum((reals_numeric - mean(reals_numeric))^2)
+  
+  return(data.frame(
+    RMSE = rmse,
+    MAE = mae,
+    MAPE = mape,
+    R_squared = r_squared
+  ))
+}
+
+calcul_metriques(prediccions_numeric, valors_reals)
+```
+
+```{r}
+dades_test <- read_csv("C:/Users/guill/Downloads/test_pre (1).csv")
+View(dades_test)
+# APLICA LES MATEIXES TRANSFORMACIONS QUE AL TRAIN
+dades_test$acousticness <- as.numeric(factor(dades_test$acousticness, 
+                                      levels = c("acustic", "mig_acustic", "no_acustic")))
+
+View(dades_test)
+
+dades_test$instrumentalness <- as.numeric(factor(dades_test$instrumentalness, 
+                                          levels = c("molta_veu", "poca_veu", "sense_veu")))
+dades_test$tempo <- as.numeric(factor(dades_test$tempo, 
+                                levels = c("lent", "mitjà", "ràpid")))
+
+dades_test$liveness <- as.numeric(factor(dades_test$liveness, 
+                                   levels = c("gravada", "mig_en_viu", "en_viu")))
+
+# PREDICCIÓ AL TEST
+prediccions_test <- predict(model5, newdata = dades_test)
+
+resultats <- data.frame(
+  id = dades_test$ID,
+  song_popularity = exp(prediccions_test)  # Si vas aplicar log, fa l'exponencial
+)
+write.csv(resultats, "prediccio_v2.csv", row.names = FALSE)
+```
+
