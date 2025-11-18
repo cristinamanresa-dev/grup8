@@ -1,0 +1,238 @@
+---
+title: "Modelitzacio de les dades"
+author: "Cristina Manresa Ponsa"
+date: "2025-11-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(Metrics)
+
+train <- read.csv("train_pre.csv")
+test  <- read.csv("test_pre.csv")
+```
+
+# sobre els 0's
+Analitzem els possibles 0 que hi ha a la variable resposta per tal de veure is es poden eliminar
+```{r}
+sum(train$song_popularity == 0)
+
+# veure les files que el contenet
+zeros <- train %>% filter(song_popularity == 0)
+head(zeros)
+```
+> Veiem que n'hi ha forces i que son nomes 6 files. Com que no te sentit que sigui 0 que es molt probable que siguin errors, o que siguin outliers. s'hauria de investigar en mes detall.
+
+Per ara els eliminem
+```{r}
+train <- train %>% filter(song_popularity > 0)
+```
+
+```{r}
+dades <- train
+
+dades$acousticness <- as.numeric(factor(dades$acousticness, 
+                                      levels = c("acustic", "mig_acustic", "no_acustic")))
+dades$instrumentalness <- as.numeric(factor(dades$instrumentalness, 
+                                          levels = c("molta_veu", "poca_veu", "sense_veu")))
+dades$tempo <- as.numeric(factor(dades$tempo, 
+                                levels = c("lent", "mitjà", "ràpid")))
+dades$liveness <- as.numeric(factor(dades$liveness, 
+                                   levels = c("gravada", "mig", "en_viu")))
+
+train <- dades
+```
+
+
+Posem les variables com toca
+```{r, eval = F}
+str(train)
+str(test)
+
+# passem les variables necessaries a factors
+train[sapply(train, is.character)] <- lapply(train[sapply(train, is.character)], factor)
+train[sapply(train, is.integer)] <- lapply(train[sapply(train, is.integer)], factor)
+
+test[sapply(test, is.character)] <- lapply(test[sapply(test, is.character)], factor)
+test[sapply(test, is.integer)] <- lapply(test[sapply(test, is.integer)], factor)
+
+train$song_popularity <- as.numeric(train$song_popularity)
+
+str(train)
+str(test)
+```
+# Mirem la distribució de les dades
+
+Amb histograma i densitat
+```{r}
+library(ggplot2)
+
+ggplot(train, aes(x = song_popularity)) +
+  geom_histogram(bins = 30, fill = "steelblue", alpha = 0.7) +
+  geom_density(color = "red", linewidth = 1) +
+  theme_minimal() +
+  labs(title = "Distribució de song_popularity",
+       x = "song_popularity",
+       y = "Freqüència")
+```
+> hi ha una cua mes llarga a la esquerre que a la dreta
+
+Resum estadistic
+```{r}
+summary(train$song_popularity)
+```
+
+Mesures de forma: asimetria i kurtosis
+```{r}
+library(e1071)
+
+skewness_value <- skewness(train$song_popularity)
+kurtosis_value <- kurtosis(train$song_popularity)
+
+cat("Asimetria:", skewness_value, "\n")
+cat("Curtosi:", kurtosis_value, "\n")
+```
+> Asimetria negativa i la kurtosis es petita per tant encara esta prou be
+
+Boxplot per veure valor extrems
+```{r}
+ggplot(train, aes(y = song_popularity)) +
+  geom_boxplot(fill = "orange") +
+  theme_minimal() +
+  labs(title = "Boxplot de song_popularity")
+
+```
+> jo no tocaria els outliers pero no se que hauriem de fer ben be, aqui no veiem que n'hi hagi.
+
+Compara amb transformacio logairtmica
+```{r}
+ggplot(train, aes(x = log(song_popularity))) +
+  geom_histogram(bins = 30, fill = "purple", alpha = 0.7) +
+  geom_density(color = "black") +
+  theme_minimal() +
+  labs(title = "Distribució de log(song_popularity)")
+
+```
+> veiem que aquest model no acaba de ser bona, distorciona i no millorar la normalitat
+
+# Model glm: distribució normal i link identitat
+Ajust GLM (Normal + link identitat)
+```{r}
+glm_model <- glm(
+  song_popularity ~ .,
+  data = train,
+  family = gaussian(link = "identity")
+)
+
+summary(glm_model)   # Resum del model
+```
+
+Validacio del model per veure si la distribucio i el link son correctes
+```{r}
+plot(glm_model)
+```
+> El model amb logaritme no es correcte (no hi ha codi), es veu que no hi ha trendencia lineal cnetral, ja que hi ha molts mes punts per sota de la linia. sobre la homocedasticitat no l'acabo de veure del tot correcte ja que no segueix una normal en el punts mes elevats.
+Sense logaritme jo el veig millor
+
+Ho provo amb link logaritme
+```{r}
+glm_model2 <- glm(
+  song_popularity ~ .,
+  data = train,
+  family = gaussian(link = "log")
+)
+
+summary(glm_model2)   # Resum del model
+
+# Validacio del model
+plot(glm_model2)
+```
+> La varibailitat veiem que no es correcte, al final les puntes es com que sobre no es constant.
+
+Amb el link de la inversa per provar
+```{r}
+glm_model3 <- glm(
+  song_popularity ~ .,
+  data = train,
+  family = gaussian(link = "inverse")
+)
+
+summary(glm_model3)   # Resum del model
+
+# Validacio del model
+plot(glm_model3)
+```
+> igual de malament que el logaritme, per al reves.
+
+# Model glm amb familia poisson i link identitat
+```{r}
+glm_model4 <- glm(
+  song_popularity ~ .,
+  data = train,
+  family = poisson(link = "identity")
+)
+
+summary(glm_model4)
+plot(glm_model4)
+```
+
+Ho provo amb link logaritme
+```{r}
+glm_model5 <- glm(
+  song_popularity ~ .,
+  data = train,
+  family = poisson(link = "log")
+)
+
+summary(glm_model5)
+plot(glm_model5)
+```
+
+Ho provo amb link inversa
+```{r}
+glm_model6 <- glm(
+  song_popularity ~ .,
+  data = train,
+  family = poisson(link = "inverse")
+)
+
+summary(glm_model6)
+plot(glm_model6)
+```
+
+Prediccions TRAIN (es per calcular els errors)
+```{r}
+pred_train <- predict(glm_model, newdata = train)
+
+# Càlcul d'errors RMSE i MAPE (sobre TRAIN)
+rmse_train <- rmse(train$song_popularity, pred_train)
+mape_train <- mape(train$song_popularity, pred_train) * 100
+
+cat("RMSE (train):", rmse_train, "\n")
+cat("MAPE (train):", mape_train, "%\n")
+
+# a ma
+rmse <- sqrt(mean((pred_train - train$song_popularity)^2))
+rmse
+
+# MAPE (vigila valors zero!)
+mape <- mean(abs((train$song_popularity - pred_train) / train$song_popularity)) * 100
+mape
+```
+Predicció sobre TEST (no té song_popularity)
+```{r}
+pred_test <- predict(glm_model, newdata = test)
+
+write.csv(
+  data.frame(id = seq_len(nrow(test)),pred_song_popularity = round(pred_test)),
+  "prediccions_test_glm.csv",
+  row.names = FALSE
+)
+
+```
+
