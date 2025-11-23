@@ -107,8 +107,8 @@ paste("rmse final tree:", round(rmse,2))
 Export del fitxer
 ```{r}
 prediccions_tree <- data.frame(
-  id = test_original$ID,
-  song_popularity = round(predict(arbol_regresion, test_original))
+  id = 1:nrow(test_original),
+  song_popularity = round(predict(arbol_final, test_original))
 )
 table(prediccions_tree$song_popularity)
 
