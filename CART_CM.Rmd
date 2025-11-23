@@ -252,7 +252,20 @@ p_test  <- predict(tree, test)
 (smape_test  <- mean(2 * abs(p_test - test$song_popularity) / (abs(test$song_popularity) + abs(p_test))) * 100)
 
 ```
-### un altre metode
+Export del fitxer
+```{r}
+prediccions_rpart <- data.frame(
+  test_original$ID,
+  song_popularity = round(predict(tree, test_original))
+)
+table(prediccions_tree$song_popularity)
+
+# Exportar a CSV
+write.csv(prediccions_rpart, "prediccions_rpart.csv", row.names = FALSE)
+
+```
+
+# Un altre metode: CARET
 ```{r}
 library(caret)
 library(rpart.plot)
@@ -318,12 +331,19 @@ mape_train; mape_test
 
 Fem les prediccions per test_original
 ```{r}
-pred_nou <- predict(caret.rpart, newdata = test_original)
+pred_nou <- predict(caret.rpart, test_original)
 pred_nou <- round(pred_nou)
 
-test_original$pred_song_popularity <- pred_nou
 
-head(test_original)
+prediccions_caret <- data.frame(
+  id = 1:nrow(test_original),
+  song_popularity = pred_nou
+)
+table(prediccions_caret$song_popularity)
+
+# Exportar a CSV
+write.csv(prediccions_caret, "prediccions_caret.csv", row.names = FALSE)
 
 ```
 
+# C4.5 ARBRE
