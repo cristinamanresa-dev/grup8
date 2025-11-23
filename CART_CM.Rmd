@@ -346,4 +346,57 @@ write.csv(prediccions_caret, "prediccions_caret.csv", row.names = FALSE)
 
 ```
 
-# C4.5 ARBRE
+# C4.5 ARBRE --> No es correcte en regressio, encara que els apunts tinc que si no acabo de veure com es podria fer
+
+paquest necessaris
+```{r}
+install.packages("RWeka")
+library(RWeka)
+```
+
+Necesitem que song_polpularity, que es la variable resposta sigui factor
+```{r}
+train$song_popularity <- as.factor(train$song_popularity)
+test$song_popularity  <- as.factor(test$song_popularity)
+
+```
+
+
+Fem el model de C4.5
+
+Primer busquem quin es el millor valors de C i de M (confidence factor i minim d'instancies per fulla)
+```{r}
+library(caret)
+
+grid <- expand.grid(C = c(0.05, 0.1, 0.25, 0.4),
+                    M = c(1, 2, 5, 10, 20))
+
+control <- trainControl(method = "cv", number = 5)
+
+model_cv <- train(
+  song_popularity ~ ., data = train,
+  method = "J48",
+  trControl = control,
+  tuneGrid = grid
+)
+
+model_cv
+
+```
+
+```{r}
+model <- J48(song_popularity ~ ., data = train, 
+             control = Weka_control(C = 0.25, M = 2))
+
+library(partykit)
+plot(as.party(model))
+
+```
+
+Prediccions sobre el test del train
+```{r}
+pred <- predict(model, newdata = test)
+table(pred, test$target)
+mean(pred == test$target) # precisio
+```
+
