@@ -1,0 +1,323 @@
+---
+title: "RandomForest"
+author: "Cristina Manresa"
+date: "2025-11-10"
+output: html_document
+---
+Preparacio de les dades, treient duplicats una altra vegada i despres mira quines variables tenen mes outliers per prescindir d'elles
+```{r}
+library(readr)
+train <- read_csv("train_pre.csv")
+test <- read_csv("test_pre.csv")
+```
+
+Fem una previa visualització de les dades
+```{r}
+# install.packages("dlookr")
+library(dlookr)
+dlookr::diagnose(train)
+head(overview(train), n = 9)
+```
+Ara per test,
+```{r}
+library(dlookr)
+dlookr::diagnose(test)
+head(overview(test), n = 9)
+```
+
+Veiem que no hi ha observacions duplicades.
+
+Anem a detctar els outliers
+```{r}
+library(dplyr)
+
+(num <- diagnose_numeric(train) %>% select(variables, outlier))
+(cat <- diagnose_category(train))
+```
+Veiem que tenim diferents variables numériques amb outliers, la que destaca mes és la variable speechniess. També tenim song_duration_min (633), loudness (481), loudness_energy_impact (346) i danceability (69) que haurem de estudiar mes detalladament.
+
+Ho fem per test
+```{r}
+library(dplyr)
+
+(num_test <- diagnose_numeric(test) %>% select(variables, outlier))
+(cat_test <- diagnose_category(test))
+```
+Veiem que tenim diferents variables numériques amb outliers, la que destaca mes és la variable speechniess. També tenim song_duration_min (204), loudness (240), loudness_energy_impact (165) i d'altres amb menys nombre d'outliers.
+
+Eliminem les variables amb masses outliers
+```{r}
+library(dplyr)
+library(readr)
+
+vars_remove <- c("speechiness", "song_duration_min", "loudness", "loudness_energy_impact")
+
+train_f <- train %>% select(-all_of(vars_remove))
+test_f  <- test  %>% select(-all_of(vars_remove))
+
+```
+
+
+# Primera proposta
+```{r}
+library(randomForest)
+library(Metrics)   # per RMSE
+
+set.seed(123)
+
+# Entrenar RF sense variables problemàtiques
+rf_model <- randomForest(song_popularity ~ ., data = train_f, ntree = 200)
+
+# Predicció sobre train per calcular RMSE (validació simple)
+pred_train <- predict(rf_model, train_f)
+
+rmse_value <- rmse(train_f$song_popularity, pred_train)
+rmse_value
+
+pred_test <- predict(rf_model, test_f)
+
+pred_test <- as.integer(pmin(pmax(round(pred_test), 0), 100))
+
+results <- data.frame(ID = seq_len(nrow(test_f)), song_popularity = pred_test)
+write.csv(results, "predictions_RF.csv", row.names = FALSE)
+
+```
+
+# Nova versio
+Provant d'eliminar totes les variables amb outliers significatius
+```{r}
+vars_remove <- c("speechiness", 
+                 "song_duration_min",
+                 "loudness",
+                 "loudness_energy_impact",
+                 "danceability")
+```
+
+```{r}
+library(readr)
+library(dplyr)
+library(randomForest)
+library(xgboost)
+library(Metrics)
+
+train_data <- read_csv("train_pre.csv")
+test_data  <- read_csv("test_pre.csv")
+
+train_clean <- train_data %>% select(-all_of(vars_remove))
+test_clean  <- test_data %>% select(-all_of(vars_remove))
+```
+
+
+Fem una separacio per validar amb 80% en train
+```{r}
+# Split train/validation
+set.seed(123)
+n <- nrow(train_clean)
+idx <- sample(seq_len(n), size = floor(0.8*n))
+
+train_split <- train_clean[idx, ]
+val_split   <- train_clean[-idx, ]
+```
+
+Fem RF i calcul de RMSE
+```{r}
+# Random Forest
+rf_model <- randomForest(
+  song_popularity ~ ., 
+  data = train_split,
+  ntree = 300
+)
+
+rf_pred <- predict(rf_model, val_split)
+rf_rmse <- rmse(val_split$song_popularity, rf_pred)
+rf_rmse
+```
+Dona un valor de 20, hauria de ser mes baix
+
+Provem amb XgBOOST
+```{r}
+# XGBoost
+X_train <- model.matrix(song_popularity ~ . - 1, data = train_split)
+y_train <- train_split$song_popularity
+
+X_val   <- model.matrix(song_popularity ~ . - 1, data = val_split)
+y_val   <- val_split$song_popularity
+
+xgb_model <- xgboost(
+  data = X_train,
+  label = y_train,
+  nrounds = 300,
+  objective = "reg:squarederror",
+  eta = 0.05,
+  max_depth = 6,
+  verbose = 0
+)
+
+xgb_pred <- predict(xgb_model, X_val)
+xgb_rmse <- rmse(y_val, xgb_pred)
+xgb_rmse
+
+```
+Aqui encara més elevat
+
+Prediccions amb les dades netes i originals
+```{r}
+# Entrenament final amb totes les dades netes
+rf_final <- randomForest(song_popularity ~ ., 
+                         data = train_clean, 
+                         ntree = 300)
+
+pred <- predict(rf_final, test_clean)
+pred <- as.integer(pmin(pmax(round(pred), 0), 100))
+
+results <- data.frame(
+  ID = seq_len(nrow(test_clean)),
+  song_popularity = pred
+)
+
+write.csv(results, "predictions_RF_2.csv", row.names = FALSE)
+```
+Ens dona millor la primera versio, quan ho pujem a Kaggle
+
+# Seguint Script de Classe
+Lleguim les dades i fem la particio
+```{r}
+dades_train <- read.csv2("train_pre.csv")
+dades_test <- read.csv2("test_pre.csv")
+
+set.seed(123)
+id <- sample(1:nrow(dades_train), 0.7*nrow(dades_train))
+train <- datos[id,]
+test  <- datos[-id,]
+```
+
+## Using RANGER PACKAGE
+```{r}
+library(ranger)
+require(utils)
+param_grid = expand.grid(num_trees = c(50, 100, 500, 1000, 5000),
+             mtry= c(3, 5, 7, ncol(train)-1),max_depth = c(1, 3, 10, 20))
+View(param_grid)
+```
+
+Ajustar un modelo con hiperparamatros
+```{r}
+oob_error = rep(NA, nrow(param_grid))
+
+for(i in 1:nrow(param_grid)){
+  
+  modelo <- ranger(
+    formula   = medv ~ .,
+    data      = datos_train, 
+    num.trees = param_grid$num_trees[i],
+    mtry      = param_grid$mtry[i],
+    max.depth = param_grid$max_depth[i],
+    seed      = 123
+  )
+  
+  oob_error[i] <- sqrt(modelo$prediction.error)
+}
+```
+
+Els resultats
+```{r}
+library(dplyr)
+library(tidyr)
+
+resultados <- param_grid
+resultados$oob_error <- oob_error
+resultados <- resultados %>% arrange(oob_error)
+resultados
+head(resultados[,4])
+p<-which(resultados[,4]==min(resultados[,4]))
+resultados[p,]
+
+#modelo Final
+set.seed(123)
+modelo  <- ranger(
+  formula   = medv ~ .,
+  data      = train,
+  num.trees = 500,
+  mtry=5,
+  max.depth = 20,
+  importance= "impurity",
+  seed      = 123
+)
+print(modelo)
+predicciones <- predict(modelo,data = datos_test)
+predicciones
+importancia_pred <- modelo$variable.importance
+sort(importancia_pred,decreasing=TRUE)
+```
+
+KPI's, aqui ho mirem amb el test (amb la particio de les dades de train)
+```{r}
+predicciones<-predicciones$predictions
+caret::postResample(predicciones, test$medv)
+##Another KPI to evaluate Accuracy in Regression --> MAPE
+error<-abs(predicciones-test$medv)
+error<-error/test$medv
+average<-mean(error)*100
+acc<-100-average
+acc # el accuracy el mape es de 88%
+
+### Complete Function for Accuracy KPIs
+accuracy <- function(pred, obs, na.rm = FALSE, 
+                     tol = sqrt(.Machine$double.eps)) {
+  err <- obs - pred     # Errors
+  if(na.rm) {
+    is.a <- !is.na(err)
+    err <- err[is.a]
+    obs <- obs[is.a]
+  }  
+  perr <- 100*err/pmax(obs, tol)  # % errors
+  return(c(
+    me = mean(err),           # Mean error
+    rmse = sqrt(mean(err^2)), # sqrt mean squared error
+    mae = mean(abs(err)),     # mean absolute error
+    mpe = mean(perr),         # mean percentage error
+    mape = mean(abs(perr)),   # mean absolute percentage error
+    r.squared = 1 - sum(err^2)/sum((obs - mean(obs))^2)
+  ))
+}
+accuracy(predicciones, test$medv)
+```
+
+## Con Caret
+```{r}
+param_grid = expand.grid(mtry= c(3, 5, 7, ncol(train)-1))
+train_ctrl <- trainControl(method="cv", # type of resampling in this case Cross-Validated
+                           number=5) # number of folds
+
+model_cv_grid <- train(medv ~ .,
+                       data = train,
+                       method = "rf", # this will use the randomForest::randomForest function
+                       metric = "RMSE", # which metric should be optimized for 
+                       trControl = train_ctrl, 
+                       tuneGrid = param_grid,
+                       # options to be passed to randomForest
+                       ntree = 5000, #Try with 1000 and 5000 # Best is 1000
+                       keep.forest=TRUE,
+                       importance=TRUE)    
+model_cv_grid
+plot(model_cv_grid)
+model_cv_grid$results
+model_cv_grid$results %>%
+  select(mtry, RMSE) %>%
+  gather(-mtry, key="metric", value="Value") %>%
+  ggplot(aes(x=mtry, y=Value, color = metric, shape=metric ) ) + 
+  geom_point() + 
+  geom_line() 
+```
+
+Resultats finals
+```{r}
+##Modelo final ntree=1000 y mtry=7
+model_final<-randomForest(medv ~ ., data=datos_train,ntree=1000, mtry=7,importance=TRUE)
+summary(model_final) 
+model_final$importance
+varImpPlot(model_final)
+predictions<-predict(model_final,data=datos_test)
+##Calculo de Kpis, se hace como en el ejemplo anterior)
+```
+
