@@ -25,6 +25,7 @@ dlookr::diagnose(test)
 head(overview(test), n = 9)
 ```
 
+(laia: a mi si que em surten observacions duplicades, 32 en el train i 2 en el test)
 Veiem que no hi ha observacions duplicades.
 
 Anem a detctar els outliers
@@ -35,6 +36,8 @@ library(dplyr)
 (cat <- diagnose_category(train))
 ```
 Veiem que tenim diferents variables numériques amb outliers, la que destaca mes és la variable speechniess. També tenim song_duration_min (633), loudness (481), loudness_energy_impact (346) i danceability (69) que haurem de estudiar mes detalladament.
+
+Es detecten outliers en variables numèriques i es revisen variables categòriques. Es veu que speechiness té molts outliers, seguit de song_duration_min, loudness, loudness_energy_impact i danceability. Això suggereix que potser caldrà treure o transformar aquestes variables.
 
 Ho fem per test
 ```{r}
@@ -56,7 +59,7 @@ train_f <- train %>% select(-all_of(vars_remove))
 test_f  <- test  %>% select(-all_of(vars_remove))
 
 ```
-
+S'eliminen les variables amb més outliers per reduir el seu impacte en els models. Es creen nous conjunts train_f i test_f sense aquestes variables.
 
 # Primera proposta
 ```{r}
@@ -82,6 +85,7 @@ results <- data.frame(ID = seq_len(nrow(test_f)), song_popularity = pred_test)
 write.csv(results, "predictions_RF.csv", row.names = FALSE)
 table(results$song_popularity)
 ```
+ Primer model de Random Forest. Es calcula RMSE sobre train (pot ser optimista). Les prediccions es retallen entre 0 i 100. Es guarden els resultats i es mostra la distribució de les prediccions.
 
 # Nova versio
 Provant d'eliminar totes les variables amb outliers significatius
@@ -93,6 +97,7 @@ vars_remove <- c("speechiness",
                  "danceability")
 ```
 
+Es tornen a carregar les dades originals i es creen conjunts nets sense les variables problemàtiques.
 ```{r}
 library(readr)
 library(dplyr)
@@ -108,7 +113,7 @@ test_clean  <- test_data %>% select(-all_of(vars_remove))
 ```
 
 
-Fem una separacio per validar amb 80% en train
+Es divideix el conjunt de train en 80% entrenament i 20% validació per avaluar millor els models abans de fer la predicció final.
 ```{r}
 # Split train/validation
 set.seed(123)
@@ -132,6 +137,7 @@ rf_pred <- predict(rf_model, val_split)
 rf_rmse <- rmse(val_split$song_popularity, rf_pred)
 rf_rmse
 ```
+S'entrena un Random Forest i s'avalua sobre el conjunt de validació. RMSE ≈ 20 és alt, indicant que el model no prediu amb molta precisió.
 Dona un valor de 20, hauria de ser mes baix
 
 Provem amb XgBOOST
@@ -158,7 +164,9 @@ xgb_rmse <- rmse(y_val, xgb_pred)
 xgb_rmse
 
 ```
-Aqui encara més elevat
+Prova amb XGBoost. RMSE encara més elevat, fet que suggereix que aquesta configuració no millora les prediccions.
+
+Els models han arribat a un limit de predictibilitat amb les caracteristiques actuals.
 
 Prediccions amb les dades netes i originals
 ```{r}
@@ -182,6 +190,7 @@ Ens dona millor la primera versio, quan ho pujem a Kaggle
 
 # Seguint Script de Classe
 Lleguim les dades i fem la particio
+S'inicia un nou enfoc basat en scripts de classe. Es tornen a eliminar variables i es divideix train en 70%-30%.
 ```{r}
 vars_remove <- c("speechiness",
                  "song_duration_ms",
@@ -359,7 +368,7 @@ model_cv_grid <- train(
 print(model_cv_grid)
 plot(model_cv_grid)
 ```
-> d'aqui em de veure amb quin nombre d'arbres ho hem de fer i despres mirar el millor mtry
+> d'aqui hem de veure amb quin nombre d'arbres ho hem de fer i despres mirar el millor mtry
 
 Model final amb millor mtry
 ```{r}
@@ -404,3 +413,29 @@ write.csv(results, "predictions_RFClasse2.csv", row.names = FALSE)
 table(results$song_popularity)
 ```
 
+#CONCLUSIO DELS METODES
+
+##COMPARATIVA DE MÈTODES
+Resultat Observat: Random Forest > XGBoost > Ranger tuning
+
+Conclusió Profunda:
+
+Random Forest funciona bé out-of-the-box per a aquest problema
+
+XGBoost necessita tuning intensiu i no millora automàticament
+
+Hiperparàmetre tuning dóna millores marginals (19.83 vs 20.16)
+
+Interpretació: Les dades no tenen relacions complexes no-lineals que XGBoost exploti millor que RF. El problema és més de feature limitation que de model limitation.
+
+##DISTRIBUCIÓ DE PREDICCIONS
+Resultat Observat: Prediccions concentrades entre 24-45, poques extremes.
+
+Conclusió Profunda:
+El model està excessivament conservador i no s'aventura a predir valors alts (70-100) o molt baixos (0-20). Això suggereix:
+
+Pèrdua d'informació dels outliers eliminats
+
+Models lineals implícits que converteixen tot a mitjanes
+
+Falta de captura de patrons no lineals
