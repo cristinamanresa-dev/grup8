@@ -26,7 +26,13 @@ head(overview(test), n = 9)
 ```
 
 (laia: a mi si que em surten observacions duplicades, 32 en el train i 2 en el test)
-Veiem que no hi ha observacions duplicades.
+
+eliminem les observacions duplicades
+```{r}
+train <- train[!duplicated(train),]
+```
+
+
 
 Anem a detctar els outliers
 ```{r}
@@ -344,6 +350,11 @@ test  <- dades_train[-id, ]
 ```
 
 ```{r}
+library(doParallel)
+cl <- makeCluster(detectCores() - 1)
+registerDoParallel(cl)
+
+
 param_grid = expand.grid(
   mtry = c(3, 5, 7, ncol(train) - 1)
 )
@@ -367,6 +378,9 @@ model_cv_grid <- train(
 
 print(model_cv_grid)
 plot(model_cv_grid)
+
+stopCluster(cl)
+
 ```
 > d'aqui hem de veure amb quin nombre d'arbres ho hem de fer i despres mirar el millor mtry
 
@@ -439,3 +453,40 @@ Pèrdua d'informació dels outliers eliminats
 Models lineals implícits que converteixen tot a mitjanes
 
 Falta de captura de patrons no lineals
+
+#random forest amb caret
+```{r}
+#caret nou
+
+# Carregar paquets necessaris
+library(caret)
+library(randomForest)
+
+# Definir variables predictives i variable objectiu
+set.seed(123)  # Per reproductibilitat
+trainIndex <- createDataPartition(train$song_popularity, p = 0.8, list = FALSE)
+trainData <- train[trainIndex, ]
+testData <- train[-trainIndex, ]
+
+# Definir control de entrenament amb validació creuada
+fitControl <- trainControl(method = "cv",  # Cross-validation
+                           number = 5)     # 5 folds
+
+# Entrenar model Random Forest
+rf_model <- train(song_popularity ~ ., 
+                  data = trainData,
+                  method = "rf",
+                  trControl = fitControl,
+                  tuneLength = 5)  # Número de valors mtry a provar
+
+# Veure resum del model
+print(rf_model)
+
+# Predicció sobre dades de test
+predictions <- predict(rf_model, newdata = testData)
+
+# Avaluar errors
+postResample(pred = predictions, obs = testData$song_popularity)
+
+```
+
