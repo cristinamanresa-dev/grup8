@@ -1,0 +1,177 @@
+---
+title: "Support Vector Machine"
+author: "Cristina Manresa Ponsa"
+date: "2025-12-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Preparació de les dades treient duplicats una altra vegada i despres mira quines variables tenen mes outliers per prescindir d'elles
+```{r}
+library(readr)
+train <- read_csv("train_pre.csv")
+test <- read_csv("test_pre.csv")
+```
+
+Fem una previa visualització de les dades
+```{r}
+dlookr::diagnose(train)
+head(dlookr::overview(train), n = 9)
+```
+
+En cas que hi hagi duplicades, les eliminem
+```{r}
+train <- train[!duplicated(train),]
+```
+
+Anem a detctar els outliers
+```{r}
+library(dplyr)
+library(dlookr)
+
+(num <- diagnose_numeric(train) %>% select(variables, outlier))
+(cat <- diagnose_category(train))
+```
+Veiem que tenim diferents variables numériques amb outliers, la que destaca mes és la variable speechniess. També tenim song_duration_min (633), loudness (481), loudness_energy_impact (346) i danceability (69) que haurem de estudiar mes detalladament.
+
+Es detecten outliers en variables numèriques i es revisen variables categòriques. Es veu que speechiness té molts outliers, seguit de song_duration_min, loudness, loudness_energy_impact i danceability. Això suggereix que potser caldrà treure o transformar aquestes variables.
+
+Ho fem per test
+```{r}
+library(dplyr)
+
+(num_test <- diagnose_numeric(test) %>% select(variables, outlier))
+(cat_test <- diagnose_category(test))
+```
+Veiem que tenim diferents variables numériques amb outliers, la que destaca mes és la variable speechniess. També tenim song_duration_min (204), loudness (240), loudness_energy_impact (165) i d'altres amb menys nombre d'outliers.
+
+Passem les variables a categoriques a factors
+```{r}
+train[sapply(train, is.character)] <- lapply(train[sapply(train, is.character)], as.factor)
+
+test[sapply(test, is.character)] <- lapply(test[sapply(test, is.character)], as.factor)
+```
+
+
+Eliminem les variables amb masses outliers
+```{r}
+library(dplyr)
+library(readr)
+
+vars_remove <- c("speechiness", "song_duration_min", "loudness", "loudness_energy_impact")
+
+train <- train %>% select(-all_of(vars_remove))
+test  <- test  %>% select(-all_of(vars_remove))
+
+```
+S'eliminen les variables amb més outliers per reduir el seu impacte en els models. Es creen nous conjunts train_f i test_f sense aquestes variables.
+
+# Proposta 1: Classe
+```{r}
+library(caret)
+set.seed(123)
+
+# particio amb 80% i 20% per test
+train_index <- createDataPartition(train$song_popularity, p = 0.8, list = FALSE)
+
+train_tr  <- train[train_index, ]
+train_val <- train[-train_index, ]
+```
+
+Fem el SVM
+```{r}
+library(e1071)
+
+svm_model <- svm(
+  song_popularity ~ ., 
+  data = train_tr,
+  kernel = "radial",
+  cost = 50,
+  gamma = 0.1
+)
+# provats 0.01 i 0.1/ 0.01 i 1/0.1 i 1/0.1 i 2/1 i 0.1/1 i 1/ 1 i 2/ 50 i 2/50 i 0.1/50 i 1
+# cap esta per sota de 21, de fet els que tenen cost 50 son molt elevats i molts passen fins i tot de 21
+pred_val <- predict(svm_model, newdata = train_val)
+(rmse_val <- sqrt(mean((pred_val - train_val$song_popularity)^2)))
+```
+
+Aixo de abaix em triga molt.
+```{r}
+# optimitzem els hiperparamatres
+# escalem les dades per tal de que vagi mes rapid
+tune_out <- tune(
+  svm,
+  song_popularity ~ .,
+  data = train_tr,
+  kernel = "radial",
+  ranges = list(cost = c(0.1, 1, 50), gamma = c(0.1, 1,2))
+)
+
+svm_model <- tune_out$best.model
+
+```
+
+
+Predim sobre el test que hem fet per validar-ho i tenir una idea de rmse
+```{r}
+pred_val <- predict(svm_model, newdata = train_val)
+(rmse_val <- sqrt(mean((pred_val - train_val$song_popularity)^2)))
+# per veure mes errors
+postResample(pred = pred_val, obs = train_val$song_popularity)
+```
+
+Sobre les prediccions del test original
+```{r}
+pred_test <- predict(svm_model, newdata = test)
+head(pred_test)
+
+write_csv(data.frame(prediction = pred_test), "prediccions_SVM.csv")
+```
+
+> Prova amb kernel lineal aver que ens dona
+
+```{r}
+svm_linear <- svm(
+  song_popularity ~ .,
+  data = train_tr,
+  kernel = "linear",
+  cost = 1
+)
+
+pred_val <- predict(svm_linear, newdata = train_val)
+(rmse_val <- sqrt(mean((pred_val - train_val$song_popularity)^2)))
+# per veure mes errors
+postResample(pred = pred_val, obs = train_val$song_popularity)
+```
+Dona un valor del RMSE de 21.48, massa alt
+
+> Ara provo amb un altre tipu de kernel
+
+```{r}
+library(caret)
+
+set.seed(123)
+
+ctrl <- trainControl(method = "cv", number = 3)
+
+svm_2 <- train(
+  song_popularity ~ .,
+  data = train_tr,
+  method = "svmLinear",
+  trControl = ctrl,
+  preProcess = c("center", "scale")
+)
+
+svm_2
+pred_val <- predict(svm_2, newdata = train_val)
+(rmse_val <- sqrt(mean((pred_val - train_val$song_popularity)^2)))
+# per veure mes errors
+postResample(pred = pred_val, obs = train_val$song_popularity)
+
+```
+Tambe dona un RMSE del 21.48, continua sent alt.
+
+# Proposta 2: Paquet carte link del script de classe

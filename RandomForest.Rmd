@@ -54,6 +54,14 @@ library(dplyr)
 ```
 Veiem que tenim diferents variables numériques amb outliers, la que destaca mes és la variable speechniess. També tenim song_duration_min (204), loudness (240), loudness_energy_impact (165) i d'altres amb menys nombre d'outliers.
 
+Categoriques a factors
+```{r}
+train[sapply(train, is.character)] <- lapply(train[sapply(train, is.character)], as.factor)
+
+test[sapply(test, is.character)] <- lapply(test[sapply(test, is.character)], as.factor)
+```
+
+
 Eliminem les variables amb masses outliers
 ```{r}
 library(dplyr)
