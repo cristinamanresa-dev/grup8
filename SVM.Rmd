@@ -107,9 +107,10 @@ tune_out <- tune(
   song_popularity ~ .,
   data = train_tr,
   kernel = "radial",
-  ranges = list(cost = c(0.1, 1, 50), gamma = c(0.1, 1,2))
+  ranges = list(cost = c(0.1, 1,10, 50, 100, 1000), gamma = c(0.001, 0.01,0.05,0.1,1))
 )
-
+# valors de la gamma per 1/p=1/18=0.055
+# el cost controla la prelanlitzacio que s'aplica als erros d'entrenament, quan mes gran redueix el marge dels errors.
 svm_model <- tune_out$best.model
 
 ```
@@ -175,3 +176,225 @@ postResample(pred = pred_val, obs = train_val$song_popularity)
 Tambe dona un RMSE del 21.48, continua sent alt.
 
 # Proposta 2: Paquet carte link del script de classe
+
+Preparació de les dades treient duplicats una altra vegada i despres mira quines variables tenen mes outliers per prescindir d'elles
+```{r}
+library(readr)
+train <- read_csv("train_pre.csv")
+test <- read_csv("test_pre.csv")
+```
+
+Fem una previa visualització de les dades
+```{r}
+dlookr::diagnose(train)
+head(dlookr::overview(train), n = 9)
+```
+
+En cas que hi hagi duplicades, les eliminem
+```{r}
+train <- train[!duplicated(train),]
+```
+
+Anem a detctar els outliers
+```{r}
+library(dplyr)
+library(dlookr)
+
+(num <- diagnose_numeric(train) %>% select(variables, outlier))
+(cat <- diagnose_category(train))
+```
+Veiem que tenim diferents variables numériques amb outliers, la que destaca mes és la variable speechniess. També tenim song_duration_min (633), loudness (481), loudness_energy_impact (346) i danceability (69) que haurem de estudiar mes detalladament.
+
+Es detecten outliers en variables numèriques i es revisen variables categòriques. Es veu que speechiness té molts outliers, seguit de song_duration_min, loudness, loudness_energy_impact i danceability. Això suggereix que potser caldrà treure o transformar aquestes variables.
+
+Ho fem per test
+```{r}
+library(dplyr)
+
+(num_test <- diagnose_numeric(test) %>% select(variables, outlier))
+(cat_test <- diagnose_category(test))
+```
+Veiem que tenim diferents variables numériques amb outliers, la que destaca mes és la variable speechniess. També tenim song_duration_min (204), loudness (240), loudness_energy_impact (165) i d'altres amb menys nombre d'outliers.
+
+Passem les variables a categoriques a factors
+```{r}
+train[sapply(train, is.character)] <- lapply(train[sapply(train, is.character)], as.factor)
+
+test[sapply(test, is.character)] <- lapply(test[sapply(test, is.character)], as.factor)
+
+test <- test %>%
+  mutate(liveness = recode(liveness, 
+                           "mig_en_viu"= "en_viu"))
+```
+
+
+Eliminem les variables amb masses outliers
+```{r}
+library(dplyr)
+library(readr)
+
+vars_remove <- c("speechiness", "song_duration_min", "loudness", "loudness_energy_impact")
+
+train <- train %>% select(-all_of(vars_remove))
+test  <- test  %>% select(-all_of(vars_remove))
+
+```
+S'eliminen les variables amb més outliers per reduir el seu impacte en els models. Es creen nous conjunts train_f i test_f sense aquestes variables.
+
+Fem la partició de les dades en 80-20, train i test
+```{r}
+set.seed(123)
+ind <- sample(2, nrow(train), replace = T, prob = c(0.8, 0.2))
+
+train_data <- train[ind == 1, ]
+test_data <- train[ind == 2, ]
+```
+
+Fem el SVM
+```{r}
+library(caret)
+model_svm <- train(
+  song_popularity ~ .,
+  data = train_data,
+  method = 'svmRadial',
+  preProcess = c("center", "scale"),
+  trCtrl = trainControl(method = "none")
+)
+model_svm
+```
+> Es veu que el procés d'afinació es va centrar en la determinació del paràmetre de Cost ($C$), mentre que el paràmetre de l'abast del kernel, Sigma ($\sigma$), es va mantenir constant a $0.0398$.
+
+Càlcul dels RMSE pel train_data i el R2
+```{r}
+pred_tr_svm <- predict(model_svm, train_data)
+fit_ind_tr_svm <- data.frame(
+  R2 = R2(pred_tr_svm, train_data$song_popularity),
+  RMSE = RMSE(pred_tr_svm, train_data$song_popularity)
+)
+```
+
+Ara pel test_data
+```{r}
+pred_tst_svm <- predict(model_svm, test_data)
+
+fit_ind_tst_svm <- data.frame(
+  R2 = R2(pred_tst_svm, test_data$song_popularity),
+  RMSE = RMSE(pred_tst_svm, test_data$song_popularity)
+)
+```
+
+Taula resultat per comparar
+```{r}
+data.frame(
+  Model = c("SVM Train", "SVM Test"),
+  R2 = c(fit_ind_tr_svm$R2, fit_ind_tst_svm$R2),
+  RMSE = c(fit_ind_tr_svm$RMSE, fit_ind_tst_svm$RMSE)
+)
+```
+Fem les prediccions per test original
+```{r}
+pred_test <- predict(model_svm, test)
+
+pred_test <- as.integer(pmin(pmax(round(pred_test), 0), 100))
+
+results <- data.frame(ID = seq_len(nrow(test)), song_popularity = pred_test)
+write.csv(results, "predictions_SVMCaret.csv", row.names = FALSE)
+table(results$song_popularity)
+```
+> Segons Kaggle ens dona un RMSE de 21.403, hauria de ser menor.
+
+Fem Validacions Creuades per buscar un millor RMSE
+```{r}
+library(caret)
+library(kernlab)
+
+svm_grid <- expand.grid(
+  .C = c(0.01, 1, 100),         # Rang de Cost (C)
+  .sigma = c(0.001, 0.1, 1.0)      # Rang de Sigma (Gamma)
+)
+
+train_control <- trainControl(
+  method = "cv", 
+  number = 10, 
+  verboseIter = TRUE # Mostra el progrés
+)
+
+svm_tuned_model <- train(
+  song_popularity ~ ., 
+  data = train_data,        
+  method = "svmRadial",   
+  trControl = train_control, 
+  tuneGrid = svm_grid,      
+  preProcess = c("center", "scale")
+)
+
+cat("\nMillors Paràmetres (C i Sigma) per a mínim RMSE:\n")
+print(svm_tuned_model$bestTune)
+
+cat("\nRMSE Mínim Obtingut amb 10-fold CV:\n")
+print(min(svm_tuned_model$results$RMSE))
+
+```
+> diu que el millor és amb sigma 0.001 i c 100, pero em dona un rmse de 21.67, per tant no acaba de ser bo
+
+Prediccions del test original
+```{r}
+pred_test <- predict(svm_tuned_model, test)
+
+pred_test <- as.integer(pmin(pmax(round(pred_test), 0), 100))
+
+results <- data.frame(ID = seq_len(nrow(test)), song_popularity = pred_test)
+write.csv(results, "predictions_SVMTuned.csv", row.names = FALSE)
+table(results$song_popularity)
+```
+
+
+# XGBOOST
+```{r}
+# Assegura't de tenir instal·lat el paquet 'xgboost'
+# install.packages("xgboost")
+library(caret)
+library(xgboost)
+# Es suposa que 'train_tr' ja conté les dades de training
+
+# 1. Definició de l'Espai de Cerca per a XGBoost
+# Aquesta graella és petita per a una prova ràpida
+xgb_grid_test <- expand.grid(
+  nrounds = c(100, 300),          # Nombre d'arbres/iteracions de boosting
+  max_depth = c(4, 6),            # Profunditat màxima de l'arbre
+  eta = c(0.1, 0.3),              # Taxa d'aprenentatge (Learning Rate)
+  gamma = 0,                      # (Sense regularització gamma en la prova ràpida)
+  colsample_bytree = 0.8,
+  min_child_weight = 1,
+  subsample = 0.8
+)
+
+# 2. Configuració del Control (10-fold CV)
+train_control <- trainControl(
+  method = "cv", 
+  number = 10, 
+  verboseIter = FALSE
+)
+
+# 3. Entrenament del Model XGBoost
+cat("Iniciant l'entrenament del model XGBoost...\n")
+
+xgb_model_tuned <- train(
+  song_popularity ~ ., 
+  data = train_tr,           
+  method = "xgbTree",         # Algorisme d'XGBoost
+  trControl = train_control, 
+  tuneGrid = xgb_grid_test,
+  preProcess = c("center", "scale") 
+)
+
+cat("Entrenament completat.\n")
+
+# 4. Presentació del Millor Rendiment
+cat("\nMillors Paràmetres XGBoost trobats:\n")
+print(xgb_model_tuned$bestTune)
+
+cat("\nRMSE Mínim Obtingut amb XGBoost (Objectiu: < 20):\n")
+print(min(xgb_model_tuned$results$RMSE))
+```
+
