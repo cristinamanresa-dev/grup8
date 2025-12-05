@@ -56,9 +56,14 @@ Veiem que tenim diferents variables numériques amb outliers, la que destaca mes
 
 Categoriques a factors
 ```{r}
+test <- test %>%
+  mutate(liveness = recode(liveness, 
+                           "mig_en_viu"= "en_viu"))
+
 train[sapply(train, is.character)] <- lapply(train[sapply(train, is.character)], as.factor)
 
 test[sapply(test, is.character)] <- lapply(test[sapply(test, is.character)], as.factor)
+
 ```
 
 
@@ -100,6 +105,7 @@ write.csv(results, "predictions_RF.csv", row.names = FALSE)
 table(results$song_popularity)
 ```
  Primer model de Random Forest. Es calcula RMSE sobre train (pot ser optimista). Les prediccions es retallen entre 0 i 100. Es guarden els resultats i es mostra la distribució de les prediccions.
+
 
 # Nova versio
 Provant d'eliminar totes les variables amb outliers significatius
@@ -147,7 +153,14 @@ rf_model <- randomForest(
   ntree = 300
 )
 
-rf_pred <- predict(rf_model, val_split)
+rf_pred <- predict(rf_model, train_split)
+rf_pred_test <- predict(rf_model, val_split)
+
+accuracy_train <- Metrics::accuracy(train_split$song_popularity, rf_pred)
+accuracy_test <- Metrics::accuracy(val_split$song_popularity, rf_pred_test)
+accuracy_train
+accuracy_test
+
 rf_rmse <- rmse(val_split$song_popularity, rf_pred)
 rf_rmse
 ```
