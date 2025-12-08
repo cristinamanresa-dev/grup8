@@ -1,0 +1,130 @@
+---
+title: "Boosting"
+author: "Gemma Galobart"
+date: "2025-11-30"
+output: html_document
+---
+
+```{r}
+library(readr)
+train <- read_csv("train_pre.csv")
+test <- read_csv("test_pre.csv")
+```
+
+```{r}
+#TRAIN
+# install.packages("dlookr")
+library(dlookr)
+dlookr::diagnose(train)
+head(overview(train), n = 9)
+
+#TEST
+library(dlookr)
+dlookr::diagnose(test)
+head(overview(test), n = 9)
+```
+
+```{r}
+library(dplyr)
+
+(num <- diagnose_numeric(train) %>% select(variables, outlier))
+(cat <- diagnose_category(train))
+```
+
+```{r}
+library(dplyr)
+
+(num_test <- diagnose_numeric(test) %>% select(variables, outlier))
+(cat_test <- diagnose_category(test))
+```
+
+```{r}
+library(dplyr)
+library(readr)
+
+vars_remove <- c("speechiness", "song_duration_min", "loudness", "loudness_energy_impact")
+
+train_f <- train %>% select(-all_of(vars_remove))
+test_f  <- test  %>% select(-all_of(vars_remove))
+
+train_f$acousticness <- as.factor(train_f$acousticness)
+train_f$instrumentalness <- as.factor(train_f$instrumentalness)
+train_f$tempo <- as.factor(train_f$tempo)
+train_f$liveness <- as.factor(train_f$liveness)
+
+test_f$acousticness <- as.factor(test_f$acousticness)
+test_f$instrumentalness <- as.factor(test_f$instrumentalness)
+test_f$tempo <- as.factor(test_f$tempo)
+test_f$liveness  <- factor(test_f$liveness, levels = levels(train_f$liveness))
+```
+
+# Boosting
+```{r}
+nobs <- nrow(train_f)
+itrain <- sample(nobs, 0.8 * nobs)
+train <- train_f[itrain, ]
+test <- train_f[-itrain, ]
+
+#install.packages("gbm")
+library(gbm)
+help("gbm")
+
+gbm.fit <- gbm(song_popularity ~ ., data = train_f) #distribution = "gaussian"
+gbm.fit
+summary(gbm.fit)
+
+#Plots de dependència parcial
+p1 <- plot(gbm.fit, i = "danceability")
+p2 <- plot(gbm.fit, i = "acousticness")
+p3 <- plot(gbm.fit, i = "audio_valence")
+
+gridExtra::grid.arrange(p1, p2,p3, ncol = 3)
+
+pred <- predict(gbm.fit, newdata = test_f)
+head(pred)
+```
+```{r}
+#Predicció
+pred_test <- predict(gbm.fit, test_f)
+
+pred_test <- as.integer(pmin(pmax(round(pred_test), 0), 100))
+
+results <- data.frame(ID = seq_len(nrow(test_f)), song_popularity = pred_test)
+write.csv(results, "predictions_Boosting.csv", row.names = FALSE)
+table(results$song_popularity)
+```
+
+# Boosting amb caret
+```{r}
+library(caret)
+modelLookup("gbm")
+
+set.seed(12345)
+trControl <- trainControl(method = "cv", number = 5)
+caret.gbm0 <- train(song_popularity ~ ., method = "gbm", data = train_f,trControl = trControl, verbose = FALSE)
+
+caret.gbm0
+
+tuneGrid <- data.frame(n.trees =  100, interaction.depth = 2,n.minobsinnode = 10, shrinkage = c(0.3, 0.1, 0.05, 0.01, 0.005))
+
+#tuneGrid <- expand.grid(n.trees = c(300, 500, 800),interaction.depth = c(2, 4, 6),shrinkage = c(0.05, 0.01, 0.005),n.minobsinnode = c(5, 10, 20))
+
+
+caret.gbm1 <- train(song_popularity ~ ., method = "gbm", data = train_f,tuneGrid = tuneGrid, trControl = trControl, verbose = FALSE)
+caret.gbm1
+
+predc <- predict(caret.gbm1, newdata = test_f)
+head(predc)
+```
+
+```{r}
+#Predicció
+pred_test2 <- predict(caret.gbm1, test_f)
+
+pred_test2 <- as.integer(pmin(pmax(round(pred_test), 0), 100))
+
+results2 <- data.frame(ID = seq_len(nrow(test_f)), song_popularity = pred_test2)
+write.csv(results2, "predictions_SVMCaret.csv", row.names = FALSE)
+table(results2$song_popularity)
+```
+
