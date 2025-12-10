@@ -1,0 +1,141 @@
+---
+title: "SVM 2"
+author: "Laia Ribes"
+date: "2025-12-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(readr)
+library(dplyr)
+library(caret)
+library(e1071)
+library(kernlab)
+```
+
+# --- 1. PREPARACIÓ I Neteja DE DADES ---
+
+```{r}
+# Carregar les dades (Assumint que 'train_pre.csv' i 'test_pre.csv' són al directori)
+# NOTA: Cal que aquests arxius estiguin presents per tal que el codi s'executi.
+train <- read_csv("train_pre.csv")
+test <- read_csv("test_pre.csv")
+```
+
+
+```{r}
+# Eliminar duplicats en el conjunt d'entrenament
+train <- train[!duplicated(train),]
+```
+
+
+```{r}
+# Variables a eliminar per alt nombre d'outliers
+vars_remove <- c("speechiness", "song_duration_min", "loudness", "loudness_energy_impact")
+```
+
+
+```{r}
+# Eliminar les variables en ambdós conjunts
+train <- train %>% dplyr::select(-all_of(vars_remove))
+test <- test %>% dplyr::select(-all_of(vars_remove))
+```
+
+
+```{r}
+# Conversió de variables categòriques a factor
+train[sapply(train, is.character)] <- lapply(train[sapply(train, is.character)], as.factor)
+test[sapply(test, is.character)] <- lapply(test[sapply(test, is.character)], as.factor)
+```
+
+
+```{r}
+# Tractament específic de la variable 'liveness' (ajust de nivells)
+# per garantir la compatibilitat amb el model
+test <- test %>%
+  mutate(liveness = recode(liveness, 
+                           "mig_en_viu"= "en_viu"))
+```
+
+# --- 2. PARTICIÓ TRAIN/VALIDACIÓ (80% / 20%) ---
+
+```{r}
+
+set.seed(123)
+# Utilització de 'createDataPartition' per a una partició estratificada i consistent
+train_index <- createDataPartition(train$song_popularity, p = 0.8, list = FALSE)
+
+train_tr  <- train[train_index, ] # Conjunt d'entrenament real
+train_val <- train[-train_index, ] # Conjunt de validació (per a avaluació interna)
+```
+
+# --- 3. MODELITZACIÓ: SUPPORT VECTOR MACHINE (SVM Radial) amb Tuning ---
+
+```{r}
+
+# Definició de la graella de cerca per a hiperparàmetres
+svm_grid <- expand.grid(
+  .C = c(0.1, 1, 10, 100),       # Rang de Cost (C): Controla el marge d'error
+  .sigma = c(0.001, 0.01, 0.1)  # Rang de Sigma: Controla l'amplitud del kernel radial
+)
+
+# Configuració del control d'entrenament: Validació Creuada (10-fold CV)
+train_control <- trainControl(
+  method = "cv", 
+  number = 10, 
+  verboseIter = FALSE
+)
+
+# Entrenament del model SVM Radial (Regressió)
+cat("Iniciant l'entrenament i optimització del model SVM amb Validació Creuada...\n")
+svm_tuned_model <- train(
+  song_popularity ~ ., 
+  data = train_tr,        
+  method = "svmRadial",   
+  trControl = train_control, 
+  tuneGrid = svm_grid,      
+  preProcess = c("center", "scale") # Escalat de dades (centrat i escalat) CRUCIAL per a SVM
+)
+
+cat("\n--- Resultats de l'Optimització d'Hiperparàmetres ---\n")
+print(svm_tuned_model$bestTune)
+cat("RMSE Mínim (durant 10-fold CV): ", 
+    min(svm_tuned_model$results$RMSE), 
+    "\n")
+```
+
+# --- 4. AVALUACIÓ (en el conjunt de Validació Intern) ---
+
+```{r}
+
+# Predicció sobre el conjunt de validació intern
+pred_val <- predict(svm_tuned_model, newdata = train_val)
+
+# Càlcul de mètriques d'avaluació (RMSE, R2, MAE)
+metrics_val <- postResample(pred = pred_val, obs = train_val$song_popularity)
+
+cat("\n--- Avaluació en el Conjunt de Validació Intern (train_val) ---\n")
+print(metrics_val)
+```
+
+# --- 5. PREDICCIÓ FINAL (en el conjunt de Test original) ---
+
+```{r}
+
+pred_test_final <- predict(svm_tuned_model, newdata = test)
+
+# Ajustar prediccions al rang [0, 100] i arrodonir a enter (tal com es fa en el document)
+pred_test_final <- as.integer(pmin(pmax(round(pred_test_final), 0), 100))
+
+# Crear l'arxiu de resultats
+results <- data.frame(ID = seq_len(nrow(test)), song_popularity = pred_test_final)
+
+# Exportar a CSV
+write.csv(results, "predictions_SVMTuned_Final.csv", row.names = FALSE)
+cat("\nArxiu de prediccions final generat: predictions_SVMTuned_Final.csv\n")
+```
+
