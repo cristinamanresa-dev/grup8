@@ -1,0 +1,215 @@
+---
+title: "preprocessament"
+author: "Guillem Torralbas Gumà"
+date: "2025-12-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(readr)
+train <- read_csv("train.csv")
+test <- read_csv("test.csv")
+train <- train[, -1]
+test <- test[, -1]
+```
+
+```{r}
+library(dlookr)
+dlookr::diagnose(train)
+dlookr::diagnose(test)
+train <- unique(train)
+```
+
+#factoritzacio
+
+```{r}
+train$key <- as.factor(train$key)
+test$key <- as.factor(test$key)
+
+train$audio_mode <- as.factor(train$audio_mode)
+test$audio_mode <- as.factor(test$audio_mode)
+
+train$time_signature <- as.factor(train$time_signature)
+test$time_signature <- as.factor(test$time_signature)
+
+train$instrumentalness <- ifelse(train$instrumentalness > 0, "Si", "No")
+train$instrumentalness <- as.factor(train$instrumentalness)
+
+talls <- quantile(train$speechiness, probs = seq(0, 1, 0.2), na.rm = TRUE)
+train$speechiness <- cut(train$speechiness, 
+                             breaks = talls, 
+                             labels = c("Molt Baixa", "Baixa", "Mitjana", "Alta", "Molt Alta"),
+                             include.lowest = TRUE)
+
+test$instrumentalness <- ifelse(test$instrumentalness > 0, "Si", "No")
+test$instrumentalness <- as.factor(test$instrumentalness)
+
+talls <- quantile(test$speechiness, probs = seq(0, 1, 0.2), na.rm = TRUE)
+test$speechiness <- cut(test$speechiness, 
+                             breaks = talls, 
+                             labels = c("Molt Baixa", "Baixa", "Mitjana", "Alta", "Molt Alta"),
+                             include.lowest = TRUE)
+
+talls_acoustic <- c(-Inf, 0.1, 0.5, Inf)
+etiquetes_acoustic <- c("Baixa", "Mitjana", "Alta")
+
+train$acousticness <- cut(train$acousticness, 
+                          breaks = talls_acoustic, 
+                          labels = etiquetes_acoustic, 
+                          include.lowest = TRUE)
+
+test$acousticness <- cut(test$acousticness, 
+                         breaks = talls_acoustic, 
+                         labels = etiquetes_acoustic, 
+                         include.lowest = TRUE)
+```
+
+```{r}
+str(train)
+library(DataExplorer)
+plot_histogram(train)
+plot_bar(train)
+```
+#outliers univ
+```{r}
+library(datawizard)
+
+# Apliquem a les columnes seleccionades
+train <- winsorize(
+  train, 
+  select = c("loudness", "song_duration_ms", "tempo"), 
+  threshold = 0.01
+)
+
+# Guardem els límits reals per a cada variable per poder-los aplicar al test
+l_loud <- range(train$loudness, na.rm = TRUE)
+l_dur  <- range(train$song_duration_ms, na.rm = TRUE)
+l_temp <- range(train$tempo, na.rm = TRUE)
+
+# Capem el test usant els mínims [1] i màxims [2] del train
+test$loudness <- pmax(pmin(test$loudness, l_loud[2]), l_loud[1])
+test$song_duration_ms <- pmax(pmin(test$song_duration_ms, l_dur[2]), l_dur[1])
+test$tempo <- pmax(pmin(test$tempo, l_temp[2]), l_temp[1])
+
+summary(train[, c("loudness", "song_duration_ms", "tempo")])
+summary(test[, c("loudness", "song_duration_ms", "tempo")])
+```
+
+#imputacio
+
+```{r}
+imputed_Data_train <- mice::mice(train, m=5, maxit = 50, method = 'pmm', seed = 500)
+train_c <- mice::complete(imputed_Data_train, 3)
+imputed_Data_test <- mice::mice(test, m=5, maxit = 50, method = 'pmm', seed = 500)
+test_c <- mice::complete(imputed_Data_test, 3)
+```
+
+#outliers multiv gower
+
+```{r}
+library(cluster)
+gower_dist <- daisy(train_c, metric = "gower")
+gower_mat <- as.matrix(gower_dist)
+dist_mitjana <- rowMeans(gower_mat)
+llindar_gower <- mean(dist_mitjana) + 3 * sd(dist_mitjana)
+outliers_idx <- which(dist_mitjana > llindar_gower)
+train_f <- train_c[-outliers_idx, ]
+str(train_f)
+```
+
+#transformacions
+
+```{r}
+train_f$song_duration_ms <- log(train_f$song_duration_ms)
+test_c$song_duration_ms <- log(test_c$song_duration_ms)
+train_f$liveness <- log1p(train_f$liveness)
+test_c$liveness  <- log1p(test_c$liveness)
+```
+
+```{r}
+library(DataExplorer)
+plot_histogram(train_f)
+plot_bar(train_f)
+```
+#feature selection
+```{r}
+library("randomForest")
+
+# Usar random forest para la selección de variables
+rf_modelo <- randomForest(song_popularity ~ ., data = train_f, importance=TRUE)
+
+library(caret)
+# Listar las variables más importantes
+varImp(rf_modelo)
+```
+
+```{r}
+variables_utils <- c("loudness", "energy", "danceability", "instrumentalness", 
+  "audio_valence", "tempo", "acousticness", "song_duration_ms", 
+  "liveness", "key", "song_popularity")
+
+train_s <- train_f[, variables_utils]
+variables_utils_test <- c("loudness", "energy", "danceability", "instrumentalness", 
+  "audio_valence", "tempo", "acousticness", "song_duration_ms", 
+  "liveness", "key")
+test_s <- test_c[, variables_utils_test]
+```
+
+```{r}
+library(caret)
+
+# --- PAS 1: ONE-HOT ENCODING (DUMMIES) ---
+
+# 1. Creem l'encoder excloent la target
+encoder_ohe <- dummyVars(" ~ .", data = train_s[, -which(names(train_s) == "song_popularity")])
+
+# 2. Transformem a data frame
+train_g <- as.data.frame(predict(encoder_ohe, newdata = train_s))
+test_g  <- as.data.frame(predict(encoder_ohe, newdata = test_s))
+
+# --- PAS 2: SELECCIÓ AUTOMÀTICA DE NUMÈRIQUES NO DUMMIES ---
+
+# 3. Identifiquem columnes numèriques que NO són binàries (més de 2 valors únics)
+# Això evita tocar les dummies de 0 i 1.
+cols_a_escalar <- names(train_g)[sapply(train_g, function(x) is.numeric(x) && length(unique(x)) > 2)]
+
+# --- PAS 3: ESTANDARDITZACIÓ SELECTIVA ---
+
+# 4. "Entrenem" l'escalador només amb aquestes columnes seleccionades
+params_escala <- preProcess(train_g[, cols_a_escalar], method = c("center", "scale"))
+
+# 5. Apliquem l'escalat només a les contínues
+train_g[, cols_a_escalar] <- predict(params_escala, train_g[, cols_a_escalar])
+test_g[, cols_a_escalar]  <- predict(params_escala, test_g[, cols_a_escalar])
+
+# --- PAS 4: FINALITZACIÓ ---
+
+# 6. Recuperem la target
+train_g$song_popularity <- train_s$song_popularity
+test_g$song_popularity  <- test_s$song_popularity
+
+# 7. Neteja de duplicats
+train_g <- unique(train_g)
+
+```
+
+```{r}
+str(train_g)
+str(test_g)
+```
+
+#enganxar csv
+```{r}
+write.csv(train_g, 
+          file = "train_g_nou.csv", 
+          row.names = FALSE)
+
+write.csv(test_g, 
+          file = "test_g_nou.csv", 
+          row.names = FALSE)
+```
+
