@@ -1,0 +1,96 @@
+---
+title: "CART EL BO"
+author: "Cristina Manresa Ponsa"
+date: "2025-12-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# OPCIO 3: Un altre metode: CARET
+```{r}
+library(caret)
+library(rpart.plot)
+
+# Definim el control de CV
+ctrl <- trainControl(method = "cv", number = 10,
+                     selectionFunction = "best")
+
+# Entrenem l'arbre de regressió
+caret.rpart <- train(song_popularity ~ ., 
+                     data = train,
+                     method = "rpart",
+                     tuneLength = 20, 
+                     trControl = ctrl,
+                     control = rpart.control(minsplit = 10, cp = 0.001, maxdepth = 30))
+
+# Visualitzem l'evolució de l'error segons CP
+ggplot(caret.rpart)
+```
+```{r}
+# Veiem l'arbre final podat
+rpart.plot(caret.rpart$finalModel)
+png("arbre_caret.png", width = 2000, height = 1600, res = 200)
+rpart.plot(caret.rpart$finalModel, type = 2, extra = 101, fallen.leaves = TRUE)
+dev.off()
+
+# Importància de les variables
+var.imp <- varImp(caret.rpart)
+plot(var.imp)
+png("importancia de les variables.png", width = 2000, height = 1600, res = 200)
+plot(var.imp)
+dev.off()
+```
+```{r}
+# Prediccions sobre train i test
+pred_train <- predict(caret.rpart, newdata = train)
+pred_test  <- predict(caret.rpart, newdata = test)
+pred_train_int <- round(pred_train)
+pred_test_int  <- round(pred_test)
+
+# Errors
+mse_train <- mean((pred_train - train$song_popularity)^2)
+rmse_train <- sqrt(mse_train)
+mse_test <- mean((pred_test - test$song_popularity)^2)
+rmse_test <- sqrt(mse_test)
+
+nonzero_idx_train <- train$song_popularity != 0
+mape_train <- mean(abs((train$song_popularity[nonzero_idx_train] - pred_train[nonzero_idx_train]) / 
+                       train$song_popularity[nonzero_idx_train])) * 100
+
+nonzero_idx_test <- test$song_popularity != 0
+mape_test <- mean(abs((test$song_popularity[nonzero_idx_test] - pred_test[nonzero_idx_test]) / 
+                      test$song_popularity[nonzero_idx_test])) * 100
+
+rmse_train
+rmse_test
+mape_train; mape_test
+
+epsilon <- 1e-6
+mape_train <- mean(abs((train$song_popularity - pred_train) / (train$song_popularity + epsilon))) * 100
+mape_test <- mean(abs((test$song_popularity - pred_test) / (test$song_popularity + epsilon))) * 100
+
+mape_train; mape_test
+```
+Els errors no canvien del voltant de 21.3
+
+
+Fem les prediccions per test_original
+```{r}
+pred_nou <- predict(caret.rpart, test_original)
+pred_nou <- round(pred_nou)
+
+
+prediccions_caret <- data.frame(
+  id = 1:nrow(test_original),
+  song_popularity = pred_nou
+)
+table(prediccions_caret$song_popularity)
+
+# Exportar a CSV
+write.csv(prediccions_caret, "prediccions_caret.csv", row.names = FALSE)
+
+```
+> Ens dona mes varietat de valors

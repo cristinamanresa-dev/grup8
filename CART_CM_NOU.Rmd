@@ -1,0 +1,303 @@
+---
+title: "CART NOU"
+author: "Cristina Manresa Ponsa"
+date: "2025-12-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+train_original <- read.csv("train_g_nou.csv")
+test_original <- read.csv("test_g_nou.csv")
+
+str(train_original)
+str(test_original)
+
+set.seed(1234)
+ind <- sample(1:nrow(train_original), 0.7*nrow(train_original))
+train <- train_original[ind,]
+test  <- train_original[-ind,]
+
+colSums(is.na(train))
+colSums(is.na(test))
+
+# descriptiva
+library(skimr)
+skim(train)
+skim(test)
+```
+
+# CART
+# OPCIO 1: Generem el arbre amb el paquet tree (no acaba de estar be)
+```{r}
+# apliquem una llavor perque sempre ens surti el mateix
+set.seed(123)
+
+# install.packages("tree")
+library(tree)
+arbol_regresion <- tree::tree(
+  formula = song_popularity ~ .,
+  data    = train,
+  split   = "deviance", # perque estem fent regressio, l'altre opcio es gini i nomes es per classificacio
+  mincut  = 20, # ns si comencem amb valors arbitraris
+  minsize = 50 # ns si comencem amb valors arbitraris
+)
+
+summary(arbol_regresion)
+```
+> Nomes surt una variable
+
+Intentem maximitzar la mida de l'arbre
+```{r}
+arbol_regresion <- tree(
+  formula = song_popularity ~ .,
+  data    = train,
+  split   = "deviance",
+  mincut  = 5,
+  minsize = 10,
+  mindev  = 0
+)
+summary(arbol_regresion)
+
+cv_arbol <- cv.tree(arbol_regresion, K = 5)
+size_optimo <- rev(cv_arbol$size)[which.min(rev(cv_arbol$dev))]
+paste("Optimal size:", size_optimo)
+```
+> Ens continua sortint molt petit
+> Per tant, l'arbre amb 1 split (2 nodes terminals) és suficient segons CV. Les altres variables no milloren la predicció.
+
+Podem l'arbre
+```{r}
+arbol_final <- prune.tree(
+  tree = arbol_regresion,
+  best = size_optimo)
+
+summary(arbol_final)
+```
+> es molt petit
+
+Fem les prediccions de l'arbre incial
+```{r}
+predicciones_train <- predict(arbol_regresion, newdata = train)
+predicciones_test <- predict(arbol_regresion, newdata = test)
+rmse_test    <- sqrt(mean((predicciones_test - test$song_popularity)^2))
+paste("Root mean squared error (rmse) initial tree:", round(rmse_test,2))
+```
+Prediccions per l'arbre final
+```{r}
+predicciones <- predict(arbol_final, newdata = train)
+predicciones_train <- predict(arbol_final, newdata = train)
+predicciones_test <- predict(arbol_final, newdata = test)
+rmse_train    <- sqrt(mean((predicciones_train - train$song_popularity)^2))
+rmse    <- sqrt(mean((predicciones_test - test$song_popularity)^2))
+paste("rmse final tree train:", round(rmse_train,2), "rmse final tree test:", round(rmse,2))
+```
+> Dona un rmse prou elevat, pero no esta overfitting ni underfitting
+
+Export del fitxer
+```{r}
+prediccions_tree <- data.frame(
+  id = 1:nrow(test_original),
+  song_popularity = round(predict(arbol_final, test_original))
+)
+table(prediccions_tree$song_popularity)
+
+# Exportar a CSV
+write.csv(prediccions_tree, "prediccions_tree.csv", row.names = FALSE)
+
+```
+> Es veu que no hi ha varietat de valors.
+
+# OPCIO 2: Amb la funció rpart()
+Creem el arbre
+```{r}
+library(rpart)
+# install.packages("rpart.plot")
+library(rpart.plot)
+# install.packages("rattle")
+library(rattle)
+
+tree <- rpart(song_popularity ~., data = train, method="anova")
+tree
+summary(tree)
+```
+
+Grafiquem 
+```{r}
+windows()
+rpart.plot(tree) # per defecte
+rpart.plot(tree,type=0) # nomes les caixes
+rpart.plot(tree,type=1) # caixes + etiquetes laterals
+rpart.plot(tree,type=2) # caixes sota cada node
+rpart.plot(tree,type=5) # estil mes compacte
+```
+
+
+```{r}
+# l'arbre en regles
+rpart.rules(tree, style = "tall")
+tree$variable.importance
+```
+
+### Busquem millor arbre amb la estrategia den Dante, cp=0
+```{r}
+set.seed(1234)
+tree <- rpart(song_popularity ~ ., data = train, cp = 0) 
+
+printcp(tree) # li demanem les validacions creuades
+plotcp(tree)
+xerror <- tree$cptable[,"xerror"]
+xerror
+imin.xerror <- which.min(xerror)
+imin.xerror # es la posiccio
+tree$cptable[imin.xerror, ]
+upper.xerror <- xerror[imin.xerror] + tree$cptable[imin.xerror, "xstd"]
+upper.xerror
+tree <- prune(tree, cp = 0.001663718) 
+rpart.plot(tree)
+
+png("arbre.png", width = 2000, height = 1600, res = 200)
+rpart.plot(tree, type = 2, extra = 101, fallen.leaves = TRUE)
+dev.off()
+```
+> Es veu que el millo cp optim és en la posicio 8, que es 0.002373723 
+
+```{r}
+importance <- tree$variable.importance
+importance <- round(100*importance/sum(importance), 1)
+importance
+```
+Evaluem el model
+```{r}
+library(rpart)
+
+# Assegura’t que song_popularity és numèrica
+train$song_popularity <- as.numeric(train$song_popularity)
+test$song_popularity  <- as.numeric(test$song_popularity)
+
+tree <- rpart(song_popularity ~ ., data = train, method = "anova", cp = 0.002373723)
+
+```
+
+
+```{r}
+# Prediccions
+p_train <- predict(tree, train)
+p_test  <- predict(tree, test)
+
+mse_train <- mean((p_train - train$song_popularity)^2)
+(rmse_train <- sqrt(mse_train))
+
+mse_test <- mean((p_test - test$song_popularity)^2)
+(rmse_test <- sqrt(mse_test))
+
+(mape_train <- mean(abs((train$song_popularity - p_train) / pmax(train$song_popularity, 1e-5))) * 100)
+(mape_test  <- mean(abs((test$song_popularity - p_test) / pmax(test$song_popularity, 1e-5))) * 100)
+
+(smape_train <- mean(2 * abs(p_train - train$song_popularity) / (abs(train$song_popularity) + abs(p_train))) * 100)
+(smape_test  <- mean(2 * abs(p_test - test$song_popularity) / (abs(test$song_popularity) + abs(p_test))) * 100)
+
+```
+> Dona valors similars el RMSE, al voltant de 21.3
+
+Export del fitxer
+```{r}
+prediccions_rpart <- data.frame(
+  id=1:nrow(test_original),
+  song_popularity = round(predict(tree, test_original))
+)
+table(prediccions_tree$song_popularity)
+
+# Exportar a CSV
+write.csv(prediccions_rpart, "prediccions_rpart.csv", row.names = FALSE)
+```
+> Tambe surten nomes dos valos
+
+# OPCIO 3: Un altre metode: CARET
+```{r}
+library(caret)
+library(rpart.plot)
+
+# Definim el control de CV
+ctrl <- trainControl(method = "cv", number = 10,
+                     selectionFunction = "best")
+
+# Entrenem l'arbre de regressió
+caret.rpart <- train(song_popularity ~ ., 
+                     data = train,
+                     method = "rpart",
+                     tuneLength = 20, 
+                     trControl = ctrl,
+                     control = rpart.control(minsplit = 10, cp = 0.001, maxdepth = 30))
+
+# Visualitzem l'evolució de l'error segons CP
+ggplot(caret.rpart)
+```
+```{r}
+# Veiem l'arbre final podat
+rpart.plot(caret.rpart$finalModel)
+png("arbre_caret.png", width = 2000, height = 1600, res = 200)
+rpart.plot(caret.rpart$finalModel, type = 2, extra = 101, fallen.leaves = TRUE)
+dev.off()
+
+# Importància de les variables
+var.imp <- varImp(caret.rpart)
+plot(var.imp)
+png("importancia de les variables.png", width = 2000, height = 1600, res = 200)
+plot(var.imp)
+dev.off()
+```
+```{r}
+# Prediccions sobre train i test
+pred_train <- predict(caret.rpart, newdata = train)
+pred_test  <- predict(caret.rpart, newdata = test)
+pred_train_int <- round(pred_train)
+pred_test_int  <- round(pred_test)
+
+# Errors
+mse_train <- mean((pred_train - train$song_popularity)^2)
+rmse_train <- sqrt(mse_train)
+mse_test <- mean((pred_test - test$song_popularity)^2)
+rmse_test <- sqrt(mse_test)
+
+nonzero_idx_train <- train$song_popularity != 0
+mape_train <- mean(abs((train$song_popularity[nonzero_idx_train] - pred_train[nonzero_idx_train]) / 
+                       train$song_popularity[nonzero_idx_train])) * 100
+
+nonzero_idx_test <- test$song_popularity != 0
+mape_test <- mean(abs((test$song_popularity[nonzero_idx_test] - pred_test[nonzero_idx_test]) / 
+                      test$song_popularity[nonzero_idx_test])) * 100
+
+rmse_train
+rmse_test
+mape_train; mape_test
+
+epsilon <- 1e-6
+mape_train <- mean(abs((train$song_popularity - pred_train) / (train$song_popularity + epsilon))) * 100
+mape_test <- mean(abs((test$song_popularity - pred_test) / (test$song_popularity + epsilon))) * 100
+
+mape_train; mape_test
+```
+Els errors no canvien del voltant de 21.3
+
+
+Fem les prediccions per test_original
+```{r}
+pred_nou <- predict(caret.rpart, test_original)
+pred_nou <- round(pred_nou)
+
+
+prediccions_caret <- data.frame(
+  id = 1:nrow(test_original),
+  song_popularity = pred_nou
+)
+table(prediccions_caret$song_popularity)
+
+# Exportar a CSV
+write.csv(prediccions_caret, "prediccions_caret.csv", row.names = FALSE)
+
+```
+> Ens dona mes varietat de valors
