@@ -1,0 +1,80 @@
+---
+title: "RF model bo"
+author: "Cristina Manresa Ponsa"
+date: "2025-12-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Segona versio
+Es tornen a carregar les dades originals i es creen conjunts nets sense les variables problemàtiques.
+```{r}
+library(readr)
+library(dplyr)
+library(randomForest)
+library(xgboost)
+library(Metrics)
+
+train_clean <- read_csv("train_g_nou.csv")
+test_clean  <- read_csv("test_g_nou.csv")
+```
+
+
+Es divideix el conjunt de train en 80% entrenament i 20% validació per avaluar millor els models abans de fer la predicció final.
+```{r}
+# Split train/validation
+set.seed(123)
+n <- nrow(train_clean)
+idx <- sample(seq_len(n), size = floor(0.8*n))
+
+train_split <- train_clean[idx, ]
+val_split   <- train_clean[-idx, ]
+```
+
+Fem RF i calcul de RMSE
+```{r}
+# Random Forest
+rf_model <- randomForest(
+  song_popularity ~ ., 
+  data = train_split,
+  ntree = 300
+)
+
+rf_pred <- predict(rf_model, train_split)
+rf_pred_test <- predict(rf_model, val_split)
+
+accuracy_train <- Metrics::accuracy(train_split$song_popularity, rf_pred)
+accuracy_test <- Metrics::accuracy(val_split$song_popularity, rf_pred_test)
+accuracy_train
+accuracy_test
+
+rf_rmse <- rmse(val_split$song_popularity, rf_pred)
+rf_rmse
+```
+S'entrena un Random Forest i s'avalua sobre el conjunt de validació. RMSE ≈ 20 és alt, indicant que el model no prediu amb molta precisió.
+Dona un valor de 20, hauria de ser mes baix, pero es el millor que tenim
+
+Els models han arribat a un limit de predictibilitat amb les caracteristiques actuals.
+
+Prediccions amb les dades netes i originals
+```{r}
+# Entrenament final amb totes les dades netes
+rf_final <- randomForest(song_popularity ~ ., 
+                         data = train_clean, 
+                         ntree = 300)
+
+pred <- predict(rf_final, test_clean)
+pred <- as.integer(pmin(pmax(round(pred), 0), 100))
+
+results <- data.frame(
+  ID = seq_len(nrow(test_clean)),
+  song_popularity = pred
+)
+
+write.csv(results, "predictions_RF_2.csv", row.names = FALSE)
+table(results$song_popularity)
+```
+Ens dona millor la primera versio, quan ho pujem a Kaggle i aquest no esta overfitting

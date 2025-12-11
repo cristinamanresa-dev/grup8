@@ -1,0 +1,325 @@
+---
+title: "RF CM NOU"
+author: "Cristina Manresa Ponsa"
+date: "2025-12-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(readr)
+train <- read_csv("train_g_nou.csv")
+test <- read_csv("test_g_nou.csv")
+```
+
+eliminem les observacions duplicades
+```{r}
+train <- train[!duplicated(train),]
+```
+
+# Primera proposta
+```{r}
+library(randomForest)
+library(Metrics)   
+
+set.seed(123)
+
+rf_model <- randomForest(song_popularity ~ ., data = train, ntree = 200)
+
+# Predicció sobre train per calcular RMSE (validació simple)
+pred_train <- predict(rf_model, train)
+(rmse_value <- rmse(train$song_popularity, pred_train))
+
+pred_test <- predict(rf_model, test)
+pred_test <- as.integer(pmin(pmax(round(pred_test), 0), 100))
+
+results <- data.frame(ID = seq_len(nrow(test)), song_popularity = pred_test)
+write.csv(results, "predictions_RF.csv", row.names = FALSE)
+table(results$song_popularity)
+```
+Primer model de Random Forest. Es calcula RMSE sobre train (pot ser optimista). Les prediccions es retallen entre 32 i 89 Es guarden els resultats i es mostra la distribució de les prediccions.
+Ens dona un RMSE sobre train que val 9.07, pero veiem que esta overfitting perque el de test amb comprovació del kaggle ens dona molt més gran.
+
+# Segona versio
+Es tornen a carregar les dades originals i es creen conjunts nets sense les variables problemàtiques.
+```{r}
+library(readr)
+library(dplyr)
+library(randomForest)
+library(xgboost)
+library(Metrics)
+
+train_clean <- read_csv("train_g_nou.csv")
+test_clean  <- read_csv("test_g_nou.csv")
+```
+
+
+Es divideix el conjunt de train en 80% entrenament i 20% validació per avaluar millor els models abans de fer la predicció final.
+```{r}
+# Split train/validation
+set.seed(123)
+n <- nrow(train_clean)
+idx <- sample(seq_len(n), size = floor(0.8*n))
+
+train_split <- train_clean[idx, ]
+val_split   <- train_clean[-idx, ]
+```
+
+Fem RF i calcul de RMSE
+```{r}
+# Random Forest
+rf_model <- randomForest(
+  song_popularity ~ ., 
+  data = train_split,
+  ntree = 300
+)
+
+rf_pred <- predict(rf_model, train_split)
+rf_pred_test <- predict(rf_model, val_split)
+
+accuracy_train <- Metrics::accuracy(train_split$song_popularity, rf_pred)
+accuracy_test <- Metrics::accuracy(val_split$song_popularity, rf_pred_test)
+accuracy_train
+accuracy_test
+
+rf_rmse <- rmse(val_split$song_popularity, rf_pred)
+rf_rmse
+```
+S'entrena un Random Forest i s'avalua sobre el conjunt de validació. RMSE ≈ 20 és alt, indicant que el model no prediu amb molta precisió.
+Dona un valor de 20, hauria de ser mes baix, pero es el millor que tenim
+
+Els models han arribat a un limit de predictibilitat amb les caracteristiques actuals.
+
+Prediccions amb les dades netes i originals
+```{r}
+# Entrenament final amb totes les dades netes
+rf_final <- randomForest(song_popularity ~ ., 
+                         data = train_clean, 
+                         ntree = 300)
+
+pred <- predict(rf_final, test_clean)
+pred <- as.integer(pmin(pmax(round(pred), 0), 100))
+
+results <- data.frame(
+  ID = seq_len(nrow(test_clean)),
+  song_popularity = pred
+)
+
+write.csv(results, "predictions_RF_2.csv", row.names = FALSE)
+table(results$song_popularity)
+```
+Ens dona millor la primera versio, quan ho pujem a Kaggle i aquest no esta overfitting
+
+# Tercera Opcio: Seguint Script de Classe
+Lleguim les dades i fem la particio
+S'inicia un nou enfoc basat en scripts de classe. Es tornen a eliminar variables i es divideix train en 70%-30%.
+```{r}
+library(readr)
+dades_train <- read.csv("train_g_nou.csv")
+dades_test  <- read.csv("test_g_nou.csv")
+
+set.seed(123)
+id <- sample(1:nrow(dades_train), 0.7*nrow(dades_train))
+train <- dades_train[id,]
+test  <- dades_train[-id,]
+```
+
+## Using RANGER PACKAGE
+```{r}
+library(ranger)
+require(utils)
+param_grid = expand.grid(num_trees = c(50, 100, 500, 1000),
+             mtry= c(3, 5, 7, ncol(train)-1),max_depth = c(3, 10, 20))
+oob_error = rep(NA, nrow(param_grid))
+```
+
+Ajustar un modelo con hiperparamatros, en triga molt i ns si es necesari
+```{r}
+for(i in 1:nrow(param_grid)){
+  
+  modelo <- ranger(
+    formula   = song_popularity ~ .,
+    data      = train, 
+    num.trees = param_grid$num_trees[i],
+    mtry      = param_grid$mtry[i],
+    max.depth = param_grid$max_depth[i],
+    seed      = 123
+  )
+  
+  oob_error[i] <- sqrt(modelo$prediction.error) # RMSE OOB
+}
+```
+
+Els resultats
+```{r}
+library(dplyr)
+
+resultados <- param_grid
+resultados$oob_error <- oob_error
+
+resultados <- resultados %>% arrange(oob_error)
+print(resultados)
+
+#MILLOR MODEL
+resultados[1, ]
+```
+
+Model final, substituint els millors valors que hagin sortit millors
+```{r}
+set.seed(123)
+modelo_final <- ranger(
+  formula = song_popularity ~ .,
+  data = train,
+  num.trees = resultados$num_trees[1],
+  mtry = resultados$mtry[1],
+  max.depth = resultados$max_depth[1],
+  importance = "impurity",
+  seed = 123
+)
+
+```
+
+Prediccions sobre el test
+```{r}
+pred_test <- predict(modelo_final, data = test)$predictions
+
+# calcul del RMSE i demes KPIs
+caret::postResample(pred_test, test$song_popularity)
+
+accuracy <- function(pred, obs, na.rm = FALSE, 
+                     tol = sqrt(.Machine$double.eps)) {
+  err <- obs - pred  
+  if(na.rm) {
+    is.a <- !is.na(err)
+    err <- err[is.a]
+    obs <- obs[is.a]
+  }
+  perr <- 100*err/pmax(obs, tol)
+  return(c(
+    me = mean(err),
+    rmse = sqrt(mean(err^2)),
+    mae = mean(abs(err)),
+    mpe = mean(perr),
+    mape = mean(abs(perr)),
+    r.squared = 1 - sum(err^2)/sum((obs - mean(obs))^2)
+  ))
+}
+
+accuracy(pred_test, test$song_popularity)
+
+```
+
+Predicció final per penjar el Kaggle
+```{r}
+pred_final <- predict(modelo_final, data = dades_test)$predictions
+pred_final <- as.integer(pmin(pmax(round(pred_final), 0), 100))
+
+results <- data.frame(
+  ID = seq_len(nrow(dades_test)),
+  song_popularity = pred_final
+)
+
+write.csv(results, "predictions_RFClasse.csv", row.names = FALSE)
+table(results$song_popularity)
+```
+es la pitjor
+
+## Con Caret
+
+Tornem a llegir les dades
+```{r}
+library(readr)
+library(dplyr)
+library(caret)
+library(randomForest)
+
+dades_train <- read.csv("train_g_nou.csv")
+dades_test  <- read.csv("test_g_nou.csv")
+
+set.seed(123)
+id <- sample(1:nrow(dades_train), 0.7 * nrow(dades_train))
+train <- dades_train[id, ]
+test  <- dades_train[-id, ]
+```
+
+```{r}
+library(doParallel)
+cl <- makeCluster(detectCores() - 1)
+registerDoParallel(cl)
+
+
+param_grid = expand.grid(
+  mtry = c(3, 5, 7, ncol(train) - 1)
+)
+
+train_ctrl <- trainControl(
+  method = "cv",
+  number = 5
+)
+
+#triga moltissim
+model_cv_grid <- train(
+  song_popularity ~ .,
+  data = train,
+  method = "rf",
+  metric = "RMSE",
+  trControl = train_ctrl,
+  tuneGrid = param_grid,
+  ntree = 1000, # Recomana a Classe prova amb 1000 o 5000 i mira quin es millor
+  importance = TRUE
+)
+
+print(model_cv_grid)
+plot(model_cv_grid)
+
+stopCluster(cl)
+
+```
+> d'aqui hem de veure amb quin nombre d'arbres ho hem de fer i despres mirar el millor mtry
+
+Model final amb millor mtry
+```{r}
+best_mtry <- model_cv_grid$bestTune$mtry
+best_mtry
+
+model_final <- randomForest(
+  song_popularity ~ .,
+  data = train,
+  ntree = 100,
+  mtry = best_mtry,
+  importance = TRUE
+)
+
+varImpPlot(model_final)
+
+```
+
+Prediccions i RMSE
+```{r}
+pred <- predict(model_final, test)
+
+# Clamp 0–100
+pred <- as.integer(pmin(pmax(round(pred), 0), 100))
+
+# RMSE
+rmse <- sqrt(mean((pred - test$song_popularity)^2))
+rmse
+```
+
+Apliquem per penjar al Kaggle
+```{r}
+pred_test <- predict(model_final, dades_test)
+pred_test <- as.integer(pmin(pmax(round(pred_test), 0), 100))
+
+results <- data.frame(
+  ID = seq_len(nrow(dades_test)),
+  song_popularity = pred_test
+)
+
+write.csv(results, "predictions_RFClasse2.csv", row.names = FALSE)
+table(results$song_popularity)
+```
+
