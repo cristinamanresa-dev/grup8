@@ -1,0 +1,82 @@
+---
+title: "SVM Model BO"
+author: "Cristina Manresa Ponsa"
+date: "2025-12-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Proposta 3
+
+Provem amb els valors que ens ha donat a dalt, amb el tran directement senser
+```{r}
+svm_parametres_fixos <- data.frame(
+  .sigma = 0.01,              
+  .C = 100                       
+)
+
+library(caret)
+
+model_svm <- train(
+  song_popularity ~ .,
+  data = train_data,
+  method = 'svmRadial',
+  preProcess = c("center", "scale"),
+  tuneGrid = svm_parametres_fixos,      
+  trControl = trainControl(method = "none")
+)
+model_svm
+
+model_svm_senser <- train(
+  song_popularity ~ .,
+  data = train,
+  method = 'svmRadial',
+  preProcess = c("center", "scale"),
+  tuneGrid = svm_parametres_fixos,      
+  trControl = trainControl(method = "none")
+)
+model_svm_senser
+
+# Mesures pel primer model
+pred_train_svm <- predict(model_svm, train_data)
+(fit_ind_tr_svm <- data.frame(
+  R2 = R2(pred_train_svm, train_data$song_popularity),
+  RMSE = RMSE(pred_train_svm, train_data$song_popularity)
+))
+
+pred_test_svm <- predict(model_svm, test_data)
+(fit_ind_tr_svm <- data.frame(
+  R2 = R2(pred_test_svm, test_data$song_popularity),
+  RMSE = RMSE(pred_test_svm, test_data$song_popularity)
+))
+
+pred_train <- predict(model_svm, train)
+pred_train <- as.integer(pmin(pmax(round(pred_train), 0), 100))
+(RMSE = RMSE(pred_train, train$song_popularity))
+
+pred_test <- predict(model_svm, test)
+pred_test <- as.integer(pmin(pmax(round(pred_test), 0), 100))
+
+results <- data.frame(ID = seq_len(nrow(test)), song_popularity = pred_test)
+write.csv(results, "predictions_SVMCaret2.csv", row.names = FALSE)
+table(results$song_popularity)
+```
+
+Prediccions pel segon model amb tot senser
+```{r}
+pred_train <- predict(model_svm_senser, train)
+pred_train <- as.integer(pmin(pmax(round(pred_train), 0), 100))
+(RMSE = RMSE(pred_train, train$song_popularity))
+
+pred_test <- predict(model_svm_senser, test)
+pred_test <- as.integer(pmin(pmax(round(pred_test), 0), 100))
+
+results <- data.frame(ID = seq_len(nrow(test)), song_popularity = pred_test)
+write.csv(results, "predictions_SVMCaret.csv", row.names = FALSE)
+table(results$song_popularity)
+```
+
+

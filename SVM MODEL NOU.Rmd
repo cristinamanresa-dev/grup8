@@ -1,0 +1,335 @@
+---
+title: "SVM CM NOU"
+author: "Cristina Manresa Ponsa"
+date: "2025-12-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Proposta 1: Classe 
+Preparació de les dades treient duplicats una altra vegada
+```{r}
+library(readr)
+train <- read_csv("train_g_nou.csv")
+test <- read_csv("test_g_nou.csv")
+```
+
+Fem una previa visualització de les dades
+```{r}
+dlookr::diagnose(train)
+head(dlookr::overview(train), n = 9)
+```
+
+En cas que hi hagi duplicades, les eliminem
+```{r}
+train <- train[!duplicated(train),]
+```
+
+```{r}
+library(caret)
+set.seed(123)
+
+# particio amb 80% i 20% per test
+train_index <- createDataPartition(train$song_popularity, p = 0.8, list = FALSE)
+
+train_tr  <- train[train_index, ]
+train_val <- train[-train_index, ]
+```
+
+Fem el SVM
+```{r}
+library(e1071)
+
+svm_model <- svm(
+  song_popularity ~ ., 
+  data = train_tr,
+  kernel = "radial",
+  cost = 80,
+  gamma = 0.01
+)
+```
+> s'obtenen uns valors del RMSE 21.26 i 21.39 indicant que no esta ni overfittling ni underfitting amb cost 50 i gamma 0.01
+amb cost 100 i gamma 0.01 tenim 21.29 i 21.41
+i amb cost 80 i gamma 0.01 21.31 i 21.40
+tots molt semblants
+
+Aixo de abaix em triga molt.
+```{r}
+# optimitzem els hiperparamatres
+# escalem les dades per tal de que vagi mes rapid
+# tune_out <- tune(
+#   svm,
+#   song_popularity ~ .,
+#   data = train_tr,
+#   kernel = "radial",
+#   ranges = list(cost = c(0.1, 1,10, 50, 100, 1000), gamma = c(0.001, 0.01,0.05,0.1,1))
+# )
+# # valors de la gamma per 1/p=1/18=0.055
+# # el cost controla la prelanlitzacio que s'aplica als erros d'entrenament, quan mes gran redueix el marge dels errors.
+# svm_model <- tune_out$best.model
+
+```
+
+
+Predim sobre el test que hem fet per validar-ho i tenir una idea de rmse
+```{r}
+pred_tr <- predict(svm_model, newdata = train_tr)
+(rmse_tr <- sqrt(mean((pred_tr - train_tr$song_popularity)^2)))
+pred_val <- predict(svm_model, newdata = train_val)
+(rmse_val <- sqrt(mean((pred_val - train_val$song_popularity)^2)))
+```
+> Donen una mica diferents, no es consideraria overfitting pero el supera de un punt
+
+Sobre les prediccions del test original
+```{r}
+pred_train <- predict(svm_model, newdata = train)
+pred_train <- as.integer(pmin(pmax(round(pred_train), 1), 100))
+(rmse <- sqrt(mean((pred_train - train$song_popularity)^2)))
+
+pred_test <- predict(svm_model, newdata = test)
+pred_test <- as.integer(pmin(pmax(round(pred_test), 1), 100))
+
+results <- data.frame(ID = seq_len(nrow(test)), song_popularity = pred_test)
+write_csv(results, "prediccions_SVM.csv")
+table(results$song_popularity)
+```
+Un RMSE de 20.78
+
+> Prova amb kernel lineal aver que ens dona
+
+```{r}
+svm_linear <- svm(
+  song_popularity ~ .,
+  data = train_tr,
+  kernel = "linear",
+  cost = 1
+)
+
+pred_val <- predict(svm_linear, newdata = train_val)
+(rmse_val <- sqrt(mean((pred_val - train_val$song_popularity)^2)))
+pred_tr <- predict(svm_linear, newdata = train_tr)
+(rmse_tr <- sqrt(mean((pred_tr - train_tr$song_popularity)^2)))
+
+pred_train <- predict(svm_linear, newdata = train)
+pred_train <- as.integer(pmin(pmax(round(pred_train), 1), 100))
+(rmse <- sqrt(mean((pred_train - train$song_popularity)^2)))
+
+```
+Dona un valor del RMSE de 21.53, massa alt amb el kernel lineal
+
+> Ara provo amb un altre tipu de kernel, svmLinear
+
+```{r}
+library(caret)
+
+set.seed(123)
+
+ctrl <- trainControl(method = "cv", number = 3)
+
+svm_2 <- train(
+  song_popularity ~ .,
+  data = train_tr,
+  method = "svmLinear",
+  trControl = ctrl,
+  preProcess = c("center", "scale")
+)
+
+svm_2
+pred_val <- predict(svm_2, newdata = train_val)
+(rmse_val <- sqrt(mean((pred_val - train_val$song_popularity)^2)))
+pred_tr <- predict(svm_2, newdata = train_tr)
+(rmse_tr <- sqrt(mean((pred_tr - train_tr$song_popularity)^2)))
+
+pred_train <- predict(svm_2, newdata = train)
+pred_train <- as.integer(pmin(pmax(round(pred_train), 1), 100))
+(rmse <- sqrt(mean((pred_train - train$song_popularity)^2)))
+
+```
+Tambe dona un RMSE del 21.53, continua sent alt.
+
+# Proposta 2: Paquet caret link del script de classe
+
+```{r}
+library(readr)
+train <- read_csv("train_g_nou.csv")
+test <- read_csv("test_g_nou.csv")
+```
+
+Fem la partició de les dades en 80-20, train i test
+```{r}
+set.seed(123)
+ind <- sample(2, nrow(train), replace = T, prob = c(0.8, 0.2))
+
+train_data <- train[ind == 1, ]
+test_data <- train[ind == 2, ]
+```
+
+Fem el SVM
+```{r}
+library(caret)
+model_svm <- train(
+  song_popularity ~ .,
+  data = train_data,
+  method = 'svmRadial',
+  preProcess = c("center", "scale"),
+  trCtrl = trainControl(method = "none")
+)
+model_svm
+```
+> Es veu que el procés d'afinació es va centrar en la determinació del paràmetre de Cost ($C$), mentre que el paràmetre de l'abast del kernel, Sigma ($\sigma$), es va mantenir constant a $0.0398$.
+
+Càlcul dels RMSE pel train_data i el R2
+```{r}
+pred_tr_svm <- predict(model_svm, train_data)
+fit_ind_tr_svm <- data.frame(
+  R2 = R2(pred_tr_svm, train_data$song_popularity),
+  RMSE = RMSE(pred_tr_svm, train_data$song_popularity)
+)
+
+pred_tst_svm <- predict(model_svm, test_data)
+
+fit_ind_tst_svm <- data.frame(
+  R2 = R2(pred_tst_svm, test_data$song_popularity),
+  RMSE = RMSE(pred_tst_svm, test_data$song_popularity)
+)
+
+data.frame(
+  Model = c("SVM Train", "SVM Test"),
+  R2 = c(fit_ind_tr_svm$R2, fit_ind_tst_svm$R2),
+  RMSE = c(fit_ind_tr_svm$RMSE, fit_ind_tst_svm$RMSE)
+)
+```
+
+
+Fem les prediccions per test original
+```{r}
+pred_train <- predict(model_svm, train)
+pred_train <- as.integer(pmin(pmax(round(pred_train), 0), 100))
+(RMSE = RMSE(pred_train, train$song_popularity))
+
+pred_test <- predict(model_svm, test)
+pred_test <- as.integer(pmin(pmax(round(pred_test), 0), 100))
+
+results <- data.frame(ID = seq_len(nrow(test)), song_popularity = pred_test)
+write.csv(results, "predictions_SVMCaret.csv", row.names = FALSE)
+table(results$song_popularity)
+```
+> Segons Kaggle ens dona un RMSE de 21.403, hauria de ser menor.
+
+Fem Validacions Creuades per buscar un millor RMSE. TRIGA MOLT
+```{r}
+library(caret)
+library(kernlab)
+
+svm_grid <- expand.grid(
+  .C = c(0.01, 1, 100),         # Rang de Cost (C)
+  .sigma = c(0.001, 0.1, 1.0)      # Rang de Sigma (Gamma)
+)
+
+train_control <- trainControl(
+  method = "cv", 
+  number = 10, 
+  verboseIter = TRUE # Mostra el progrés
+)
+
+svm_tuned_model <- train(
+  song_popularity ~ ., 
+  data = train_data,        
+  method = "svmRadial",   
+  trControl = train_control, 
+  tuneGrid = svm_grid,      
+  preProcess = c("center", "scale")
+)
+
+cat("\nMillors Paràmetres (C i Sigma) per a mínim RMSE:\n")
+print(svm_tuned_model$bestTune)
+
+cat("\nRMSE Mínim Obtingut amb 10-fold CV:\n")
+print(min(svm_tuned_model$results$RMSE))
+
+```
+> diu que el millor és amb sigma 0.001 i c 100, pero em dona un rmse de 21.67, per tant no acaba de ser bo
+
+Prediccions del test original
+```{r}
+pred_test <- predict(svm_tuned_model, test)
+pred_test <- as.integer(pmin(pmax(round(pred_test), 0), 100))
+
+results <- data.frame(ID = seq_len(nrow(test)), song_popularity = pred_test)
+write.csv(results, "predictions_SVMTuned.csv", row.names = FALSE)
+table(results$song_popularity)
+```
+
+# Proposta 3
+
+Provem amb els valors que ens ha donat a dalt, amb el tran directement senser
+```{r}
+svm_parametres_fixos <- data.frame(
+  .sigma = 0.01,              
+  .C = 100                       
+)
+
+library(caret)
+
+model_svm <- train(
+  song_popularity ~ .,
+  data = train_data,
+  method = 'svmRadial',
+  preProcess = c("center", "scale"),
+  tuneGrid = svm_parametres_fixos,      
+  trControl = trainControl(method = "none")
+)
+model_svm
+
+model_svm_senser <- train(
+  song_popularity ~ .,
+  data = train,
+  method = 'svmRadial',
+  preProcess = c("center", "scale"),
+  tuneGrid = svm_parametres_fixos,      
+  trControl = trainControl(method = "none")
+)
+model_svm_senser
+
+# Mesures pel primer model
+pred_train_svm <- predict(model_svm, train_data)
+(fit_ind_tr_svm <- data.frame(
+  R2 = R2(pred_train_svm, train_data$song_popularity),
+  RMSE = RMSE(pred_train_svm, train_data$song_popularity)
+))
+
+pred_test_svm <- predict(model_svm, test_data)
+(fit_ind_tr_svm <- data.frame(
+  R2 = R2(pred_test_svm, test_data$song_popularity),
+  RMSE = RMSE(pred_test_svm, test_data$song_popularity)
+))
+
+pred_train <- predict(model_svm, train)
+pred_train <- as.integer(pmin(pmax(round(pred_train), 0), 100))
+(RMSE = RMSE(pred_train, train$song_popularity))
+
+pred_test <- predict(model_svm, test)
+pred_test <- as.integer(pmin(pmax(round(pred_test), 0), 100))
+
+results <- data.frame(ID = seq_len(nrow(test)), song_popularity = pred_test)
+write.csv(results, "predictions_SVMCaret2.csv", row.names = FALSE)
+table(results$song_popularity)
+```
+
+Prediccions pel segon model amb tot senser
+```{r}
+pred_train <- predict(model_svm_senser, train)
+pred_train <- as.integer(pmin(pmax(round(pred_train), 0), 100))
+(RMSE = RMSE(pred_train, train$song_popularity))
+
+pred_test <- predict(model_svm_senser, test)
+pred_test <- as.integer(pmin(pmax(round(pred_test), 0), 100))
+
+results <- data.frame(ID = seq_len(nrow(test)), song_popularity = pred_test)
+write.csv(results, "predictions_SVMCaret.csv", row.names = FALSE)
+table(results$song_popularity)
+```
+
