@@ -1,0 +1,97 @@
+```{r}
+# 1. Càrrega de llibreries i dades
+library(readr)
+library(caret)
+library(xgboost)
+
+dades <- read_csv("train_g_boost.csv")
+test_f <- read_csv("test_g_boost.csv")
+
+# 2. Preprocessament i Feature Engineering (Aplicat a ambdós datasets)
+prepara_dades <- function(df) {
+  # Crear interaccions numèriques basades en la importància del RF
+  df$prod_power <- df$loudness * df$energy
+  df$happy_dance <- df$danceability * df$audio_valence
+  df$intensity_tempo <- df$loudness * df$tempo
+  
+  # Convertir variables categòriques a factors
+  df$acousticness <- as.factor(df$acousticness)
+  df$instrumentalness <- as.factor(df$instrumentalness)
+  df$speechiness <- as.factor(df$speechiness)
+  
+  # Eliminar variables amb importància negativa o molt baixa segons el RF
+  df$time_signature <- NULL
+  df$audio_mode <- NULL
+  
+  return(df)
+}
+
+dades <- prepara_dades(dades)
+test_f <- prepara_dades(test_f)
+
+# 3. Preparació de l'entrenament
+set.seed(123)
+train_index <- createDataPartition(dades$song_popularity, p = 0.8, list = FALSE)
+train_set <- dades[train_index, ]
+test_set  <- dades[-train_index, ]
+
+# Configuració Grid Search optimitzada
+grid_xgb_v2 <- expand.grid(
+  nrounds = 2000,           # Més rondes perquè hem baixat l'eta
+  max_depth = 8,            
+  eta = 0.005,              
+  gamma = 10,               
+  colsample_bytree = 0.6,   # Agafem menys variables per arbre per diversificar
+  min_child_weight = 1,
+  subsample = 0.8
+)
+
+ctrl <- trainControl(method = "cv", number = 5)
+
+# 4. Entrenament del model
+# Nota: Eliminem referències a 'song_popularity_log' si no existeix a dades
+model_final <- train(
+  song_popularity ~ ., 
+  data = train_set,
+  method = "xgbTree",
+  trControl = ctrl,
+  tuneGrid = grid_xgb_v2,
+  metric = "MAE"
+)
+
+# 5. Avaluació interna (Validation Set)
+pred_val <- predict(model_final, test_set)
+rmse_val <- sqrt(mean((test_set$song_popularity - pred_val)^2))
+cat("RMSE en conjunt de validació:", rmse_val, "\n")
+
+# Gràfic de residus
+residus <- test_set$song_popularity - pred_val
+plot(pred_val, residus, main="Gràfic de Residus", xlab="Predicció", ylab="Error")
+abline(h = 0, col = "red")
+
+# 6. Prediccions Finals sobre dataset 'test_f'
+# Extraiem només les columnes que el model coneix per evitar l'error 'object not found'
+features_model <- model_final$coefnames
+test_f_final <- test_f[, features_model]
+
+# Predicció directa per evitar conflictes amb fórmules de caret
+prediccions_finals <- predict(model_final, newdata = test_f_final)
+
+# Truncar valors al rang real (0-100) i arrodonir
+prediccions_finals <- pmax(0, pmin(100, prediccions_finals))
+
+# 7. Importància de les variables
+importancia <- varImp(model_final, scale = TRUE)
+plot(importancia, top = 20, main = "Importància Final de Variables")
+
+# 8. Generació del fitxer de resultats
+resultats <- data.frame(
+  id = 1:nrow(test_f),
+  song_popularity = round(prediccions_finals)
+)
+
+write.csv(resultats, "final_boost.csv", row.names = FALSE)
+cat("Fitxer 'final_boost.csv' creat correctament.")
+```
+
+

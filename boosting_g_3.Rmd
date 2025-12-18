@@ -1,0 +1,85 @@
+```{r}
+#ultimi
+# 1. Càrrega de llibreries i dades
+library(readr)
+library(caret)
+library(xgboost)
+
+dades <- read_csv("train_g_boost.csv")
+test_f <- read_csv("test_g_boost.csv")
+
+# 2. Preprocessament i Feature Engineering (Idèntic per ambdós)
+prepara_dades <- function(df) {
+  # Interaccions numèriques clau
+  df$prod_power <- df$loudness * df$energy
+  df$happy_dance <- df$danceability * df$audio_valence
+  df$intensity_tempo <- df$loudness * df$tempo
+  
+  # Conversió de factors
+  df$acousticness <- as.factor(df$acousticness)
+  df$instrumentalness <- as.factor(df$instrumentalness)
+  df$speechiness <- as.factor(df$speechiness)
+  
+  # Eliminació de variables sorolloses
+  df$time_signature <- NULL
+  df$audio_mode <- NULL
+  
+  return(df)
+}
+
+dades_final_train <- prepara_dades(dades)
+dades_final_test <- prepara_dades(test_f)
+
+# 3. Configuració Final de l'Algorisme
+# Utilitzem MAE com a mètrica per ser robustos als outliers
+# I max_depth 8 per capturar tota la complexitat del dataset sencer
+grid_final <- expand.grid(
+  nrounds = 2000,
+  max_depth = 8,
+  eta = 0.005,
+  gamma = 10,
+  colsample_bytree = 0.6,
+  min_child_weight = 1,
+  subsample = 0.8
+)
+
+# Cross-Validation sobre tot el dataset (sense split 80/20)
+ctrl_final <- trainControl(method = "cv", number = 5)
+
+# 4. Entrenament amb el 100% de les dades (dades_final_train)
+cat("Entrenant amb tot el dataset... Això pot trigar una mica més.\n")
+
+model_definitiu <- train(
+  song_popularity ~ ., 
+  data = dades_final_train,
+  method = "xgbTree",
+  trControl = ctrl_final,
+  tuneGrid = grid_final,
+  metric = "MAE"
+)
+
+# 5. Generació de prediccions sobre el dataset d'entrega (test_f)
+
+# En lloc de filtrar les columnes manualment, deixem que caret 
+# gestioni la conversió de factors a dummies internament:
+prediccions_definitives <- predict(model_definitiu, newdata = dades_final_test)
+
+# 6. Post-processament (Forçar rang 0-100 i arrodonir)
+prediccions_definitives <- pmax(0, pmin(100, prediccions_definitives))
+
+# Mostra el RMSE, MAE i R-squared obtinguts per CV
+print(model_definitiu$results[which.min(model_definitiu$results$MAE), ])
+
+# Creació del fitxer CSV final
+resultats_entrega <- data.frame(
+  id = 1:nrow(test_f),
+  song_popularity = round(prediccions_definitives)
+)
+
+write.csv(resultats_entrega, "entrega_final_xgboost.csv", row.names = FALSE)
+cat("Fitxer 'entrega_final_xgboost.csv' generat amb èxit.\n")
+
+# 7. Visualització d'importància final
+plot(varImp(model_definitiu), top = 15, main = "Importància Final (Model Completi)")
+```
+

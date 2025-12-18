@@ -1,0 +1,164 @@
+---
+title: "preprocessament"
+author: "Guillem Torralbas Gumà"
+date: "2025-12-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(readr)
+train <- read_csv("train.csv")
+test <- read_csv("test.csv")
+train <- train[, -1]
+test <- test[, -1]
+```
+
+```{r}
+library(dlookr)
+dlookr::diagnose(train)
+dlookr::diagnose(test)
+train <- unique(train)
+```
+
+#factoritzacio
+
+```{r}
+train$key <- as.factor(train$key)
+test$key <- as.factor(test$key)
+
+train$audio_mode <- as.factor(train$audio_mode)
+test$audio_mode <- as.factor(test$audio_mode)
+
+train$time_signature <- as.factor(train$time_signature)
+test$time_signature <- as.factor(test$time_signature)
+
+train$instrumentalness <- ifelse(train$instrumentalness > 0, "Si", "No")
+train$instrumentalness <- as.factor(train$instrumentalness)
+
+talls <- quantile(train$speechiness, probs = seq(0, 1, 0.2), na.rm = TRUE)
+train$speechiness <- cut(train$speechiness, 
+                             breaks = talls, 
+                             labels = c("Molt Baixa", "Baixa", "Mitjana", "Alta", "Molt Alta"),
+                             include.lowest = TRUE)
+
+test$instrumentalness <- ifelse(test$instrumentalness > 0, "Si", "No")
+test$instrumentalness <- as.factor(test$instrumentalness)
+
+talls <- quantile(test$speechiness, probs = seq(0, 1, 0.2), na.rm = TRUE)
+test$speechiness <- cut(test$speechiness, 
+                             breaks = talls, 
+                             labels = c("Molt Baixa", "Baixa", "Mitjana", "Alta", "Molt Alta"),
+                             include.lowest = TRUE)
+
+talls_acoustic <- c(-Inf, 0.1, 0.5, Inf)
+etiquetes_acoustic <- c("Baixa", "Mitjana", "Alta")
+
+train$acousticness <- cut(train$acousticness, 
+                          breaks = talls_acoustic, 
+                          labels = etiquetes_acoustic, 
+                          include.lowest = TRUE)
+
+test$acousticness <- cut(test$acousticness, 
+                         breaks = talls_acoustic, 
+                         labels = etiquetes_acoustic, 
+                         include.lowest = TRUE)
+```
+
+```{r}
+str(train)
+library(DataExplorer)
+plot_histogram(train)
+plot_bar(train)
+```
+#outliers univ
+```{r}
+library(datawizard)
+
+# Apliquem a les columnes seleccionades
+train <- winsorize(
+  train, 
+  select = c("loudness", "song_duration_ms", "tempo"), 
+  threshold = 0.01
+)
+
+# Guardem els límits reals per a cada variable per poder-los aplicar al test
+l_loud <- range(train$loudness, na.rm = TRUE)
+l_dur  <- range(train$song_duration_ms, na.rm = TRUE)
+l_temp <- range(train$tempo, na.rm = TRUE)
+
+# Capem el test usant els mínims [1] i màxims [2] del train
+test$loudness <- pmax(pmin(test$loudness, l_loud[2]), l_loud[1])
+test$song_duration_ms <- pmax(pmin(test$song_duration_ms, l_dur[2]), l_dur[1])
+test$tempo <- pmax(pmin(test$tempo, l_temp[2]), l_temp[1])
+
+summary(train[, c("loudness", "song_duration_ms", "tempo")])
+summary(test[, c("loudness", "song_duration_ms", "tempo")])
+```
+
+#imputacio
+
+```{r}
+imputed_Data_train <- mice::mice(train, m=5, maxit = 50, method = 'pmm', seed = 500)
+train_c <- mice::complete(imputed_Data_train, 3)
+imputed_Data_test <- mice::mice(test, m=5, maxit = 50, method = 'pmm', seed = 500)
+test_c <- mice::complete(imputed_Data_test, 3)
+```
+
+#outliers multiv gower
+
+```{r}
+library(cluster)
+gower_dist <- daisy(train_c, metric = "gower")
+gower_mat <- as.matrix(gower_dist)
+dist_mitjana <- rowMeans(gower_mat)
+llindar_gower <- mean(dist_mitjana) + 3 * sd(dist_mitjana)
+outliers_idx <- which(dist_mitjana > llindar_gower)
+train_f <- train_c[-outliers_idx, ]
+str(train_f)
+```
+
+#transformacions
+
+```{r}
+train_f$song_duration_ms <- log(train_f$song_duration_ms)
+test_c$song_duration_ms <- log(test_c$song_duration_ms)
+train_f$liveness <- log1p(train_f$liveness)
+test_c$liveness  <- log1p(test_c$liveness)
+```
+
+```{r}
+library(DataExplorer)
+plot_histogram(train_f)
+plot_bar(train_f)
+```
+
+```{r}
+train_s <- train_f
+test_s <- test_c
+```
+
+```{r}
+train_g <- unique(train_g)
+test_g <- test_s
+```
+
+```{r}
+str(train_g)
+str(test_g)
+```
+
+#enganxar csv
+```{r}
+write.csv(train_g, 
+          file = "train_g_boost.csv", 
+          row.names = FALSE)
+
+write.csv(test_g, 
+          file = "test_g_boost.csv", 
+          row.names = FALSE)
+```
+
